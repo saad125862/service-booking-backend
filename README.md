@@ -22,7 +22,8 @@ On start the API container applies the database migrations, seeds demo data, and
 |---|---|
 | Health check | http://localhost:3000/api/v1/health |
 | Swagger UI | http://localhost:3000/api/docs |
-| Demo account | `demo@example.com` / `Demo@1234` |
+| Demo customer | `demo@example.com` / `Demo@1234` |
+| Demo admin | `admin@example.com` / `Admin@1234` (role `admin`; public sign-up only ever creates customers) |
 | Admin key (local) | `dev-admin-key-change-me` (header `X-Admin-Key`) |
 
 Code changes: Docker Desktop on Windows doesn't forward file-change events, so run `docker compose restart api` after editing `src/`. After changing `package.json` or the Prisma schema, run `docker compose up -d --build api`.

@@ -56,7 +56,19 @@ async function main() {
     },
   });
 
-  console.log(`Seeded ${SERVICES.length} services and the demo user.`);
+  // Demo admin for reviewers (documented in the README). Never created through public sign-up.
+  await prisma.user.upsert({
+    where: { email: 'admin@example.com' },
+    update: { role: 'admin' },
+    create: {
+      name: 'Admin User',
+      email: 'admin@example.com',
+      role: 'admin',
+      passwordHash: await bcrypt.hash('Admin@1234', BCRYPT_COST),
+    },
+  });
+
+  console.log(`Seeded ${SERVICES.length} services, the demo customer and the demo admin.`);
 }
 
 main()

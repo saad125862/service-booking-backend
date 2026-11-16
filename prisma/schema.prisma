@@ -19,8 +19,17 @@ enum AppointmentStatus {
   @@map("appointment_status")
 }
 
+enum UserRole {
+  user
+  admin
+
+  @@map("user_role")
+}
+
 model User {
   id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Public registration always creates "user"; the admin account is seeded, never self-service.
+  role         UserRole      @default(user)
   name         String        @db.VarChar(100)
   // Always stored lower-cased by the application (see auth.schema.js).
   email        String        @unique

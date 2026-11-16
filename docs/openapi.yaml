@@ -13,7 +13,9 @@ info:
     - Booking conflicts are enforced by the database, so the API answers `409 SLOT_UNAVAILABLE` even under concurrent requests.
     - Times are ISO 8601 (UTC). Slot labels and `startLabel` are rendered in the business time zone (`timeZone` field).
 
-    **Demo account:** `demo@example.com` / `Demo@1234`
+    **Demo accounts**
+    - Customer: `demo@example.com` / `Demo@1234`
+    - Admin: `admin@example.com` / `Admin@1234` (accounts have a `role`: `user` or `admin`; public sign-up always creates `user`)
 servers:
   - url: /api/v1
     description: This server (works locally and on Render)
@@ -503,6 +505,7 @@ components:
         name: { type: string, example: Demo User }
         email: { type: string, format: email, example: demo@example.com }
         phone: { type: string, nullable: true, example: null }
+        role: { type: string, enum: [user, admin], example: user }
         createdAt: { type: string, format: date-time }
     RegisterRequest:
       type: object

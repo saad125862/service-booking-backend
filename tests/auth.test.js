@@ -15,6 +15,26 @@ describe('auth and profile', () => {
     expect(dup.body.error.code).toBe('EMAIL_TAKEN');
   });
 
+  it('always registers customers: a role sent by the client is ignored', async () => {
+    const res = await api()
+      .post('/api/v1/auth/register')
+      .send({ name: 'Sneaky', email: `test-role-${Date.now()}@example.com`, password: 'Passw0rd1', role: 'admin' });
+    expect(res.status).toBe(201);
+    expect(res.body.data.user.role).toBe('user');
+  });
+
+  it('returns the role on login: demo customer is a user, demo admin is an admin', async () => {
+    const customer = await api().post('/api/v1/auth/login').send({ email: 'demo@example.com', password: 'Demo@1234' });
+    expect(customer.body.data.user.role).toBe('user');
+
+    const admin = await api().post('/api/v1/auth/login').send({ email: 'admin@example.com', password: 'Admin@1234' });
+    expect(admin.status).toBe(200);
+    expect(admin.body.data.user.role).toBe('admin');
+
+    const me = await api().get('/api/v1/users/me').set(auth(admin.body.data.token));
+    expect(me.body.data.role).toBe('admin');
+  });
+
   it('validates registration input with field-level details', async () => {
     const res = await api().post('/api/v1/auth/register').send({ name: 'A', email: 'nope', password: 'short' });
     expect(res.status).toBe(400);

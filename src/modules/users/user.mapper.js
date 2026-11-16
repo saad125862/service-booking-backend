@@ -4,5 +4,6 @@ export const toUser = (u) => ({
   name: u.name,
   email: u.email,
   phone: u.phone,
+  role: u.role,
   createdAt: u.createdAt,
 });
