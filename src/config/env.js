@@ -25,7 +25,8 @@ const schema = z.object({
 
   // Online card / wallet payments. A provider is offered to customers only when it is configured.
   // PUBLIC_API_URL is where the gateways send the customer back (must be reachable from the browser).
-  PUBLIC_API_URL: z.string().default('http://localhost:3000'),
+  // Render sets RENDER_EXTERNAL_URL itself, so on Render this works without any setting.
+  PUBLIC_API_URL: z.string().default(process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000'),
   SSLCOMMERZ_STORE_ID: z.string().default(''),
   SSLCOMMERZ_STORE_PASSWORD: z.string().default(''),
   SSLCOMMERZ_SANDBOX: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
