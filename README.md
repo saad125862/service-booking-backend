@@ -4,6 +4,7 @@ REST API for **Seba**, a service booking and management app: customers browse se
 
 - **Stack:** Node.js 24, Express 5, PostgreSQL 16, Prisma 7, JWT, Zod, Gemini
 - **Interactive API docs (Swagger UI):** `http://localhost:3000/api/docs` (spec: [`docs/openapi.yaml`](docs/openapi.yaml))
+- **Live API (Render + Neon):** https://seba-api-0062.onrender.com (Swagger: https://seba-api-0062.onrender.com/api/docs). Free tier: the first request after idle can take 30-60 s.
 - **Flutter app:** see the `service-booking-app` repository
 
 ## Quick start (Docker)
