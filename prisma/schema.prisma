@@ -19,6 +19,43 @@ enum AppointmentStatus {
   @@map("appointment_status")
 }
 
+enum FieldType {
+  text
+  textarea
+  number
+  boolean
+  select
+
+  @@map("field_type")
+}
+
+enum DiscountStatus {
+  pending
+  approved
+  declined
+  used
+
+  @@map("discount_status")
+}
+
+enum PaymentType {
+  cash
+  card
+  mobile_wallet
+  bank
+
+  @@map("payment_type")
+}
+
+enum PaymentStatus {
+  unpaid
+  submitted
+  paid
+  failed
+
+  @@map("payment_status")
+}
+
 enum UserRole {
   user
   admin
@@ -27,56 +64,72 @@ enum UserRole {
 }
 
 model User {
-  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // Public registration always creates "user"; the admin account is seeded, never self-service.
-  role         UserRole      @default(user)
-  name         String        @db.VarChar(100)
+  role             UserRole          @default(user)
+  name             String            @db.VarChar(100)
   // Always stored lower-cased by the application (see auth.schema.js).
-  email        String        @unique
-  passwordHash String        @map("password_hash")
-  phone        String?       @db.VarChar(30)
+  email            String            @unique
+  passwordHash     String            @map("password_hash")
+  phone            String?           @db.VarChar(30)
   // Default service address, used to prefill bookings.
-  address      String?       @db.VarChar(300)
-  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  appointments  Appointment[]
-  notifications Notification[]
+  address          String?           @db.VarChar(300)
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  appointments     Appointment[]
+  notifications    Notification[]
+  discountRequests DiscountRequest[]
 
   @@map("users")
 }
 
 model Service {
-  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name            String        @unique @db.VarChar(120)
-  description     String
-  price           Decimal       @db.Decimal(10, 2)
-  durationMinutes Int           @map("duration_minutes")
-  imageUrl        String?       @map("image_url")
-  category        String        @db.VarChar(60)
-  isFeatured      Boolean       @default(false) @map("is_featured")
-  isActive        Boolean       @default(true) @map("is_active")
-  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  appointments    Appointment[]
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String            @unique @db.VarChar(120)
+  description      String
+  price            Decimal           @db.Decimal(10, 2)
+  durationMinutes  Int               @map("duration_minutes")
+  imageUrl         String?           @map("image_url")
+  category         String            @db.VarChar(60)
+  isFeatured       Boolean           @default(false) @map("is_featured")
+  isActive         Boolean           @default(true) @map("is_active")
+  // Values for the admin-defined custom fields (see ServiceField), keyed by field key.
+  attributes       Json              @default("{}")
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  appointments     Appointment[]
+  discountRequests DiscountRequest[]
 
   @@index([category])
   @@map("services")
 }
 
 model Appointment {
-  id        String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId    String            @map("user_id") @db.Uuid
-  serviceId String            @map("service_id") @db.Uuid
-  startTime DateTime          @map("start_time") @db.Timestamptz(6)
-  endTime   DateTime          @map("end_time") @db.Timestamptz(6)
-  status    AppointmentStatus @default(pending)
+  id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String            @map("user_id") @db.Uuid
+  serviceId      String            @map("service_id") @db.Uuid
+  startTime      DateTime          @map("start_time") @db.Timestamptz(6)
+  endTime        DateTime          @map("end_time") @db.Timestamptz(6)
+  status         AppointmentStatus @default(pending)
   // Where the service takes place. Required for new bookings; null only for older rows.
-  address   String?           @db.VarChar(300)
-  notes     String?           @db.VarChar(500)
-  createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  address        String?           @db.VarChar(300)
+  // Price snapshot taken at booking time (so later price edits and discounts do not rewrite sales).
+  price          Decimal           @default(0) @db.Decimal(10, 2)
+  originalPrice  Decimal           @default(0) @map("original_price") @db.Decimal(10, 2)
+  discountAmount Decimal           @default(0) @map("discount_amount") @db.Decimal(10, 2)
 
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  service Service @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  // How the customer chose to pay, and where that payment stands.
+  paymentMethodId  String?       @map("payment_method_id") @db.Uuid
+  paymentStatus    PaymentStatus @default(unpaid) @map("payment_status")
+  // Customer-entered transaction reference (e.g. bKash TrxID) when the method requires one.
+  paymentReference String?       @map("payment_reference") @db.VarChar(60)
+  paidAt           DateTime?     @map("paid_at") @db.Timestamptz(6)
+  notes            String?       @db.VarChar(500)
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  service       Service        @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  paymentMethod PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
 
   @@index([userId, startTime(sort: Desc)])
   @@index([status, endTime])
@@ -99,4 +152,69 @@ model Notification {
   @@index([userId, createdAt(sort: Desc)])
   @@index([userId, readAt])
   @@map("notifications")
+}
+
+// Admin-defined extra fields for the add/edit service form (the "dynamic form").
+model ServiceField {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key       String    @unique @db.VarChar(40)
+  label     String    @db.VarChar(80)
+  type      FieldType
+  // For "select" fields: the list of allowed values.
+  options   Json?
+  required  Boolean   @default(false)
+  sortOrder Int       @default(0) @map("sort_order")
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("service_fields")
+}
+
+// A customer's request for a discount (made through the AI assistant) and the admin's decision.
+model DiscountRequest {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String         @map("user_id") @db.Uuid
+  serviceId         String?        @map("service_id") @db.Uuid
+  message           String         @db.VarChar(500)
+  // Language of the request (en | bn | banglish): the decision reply is written in it.
+  language          String         @default("en") @db.VarChar(10)
+  status            DiscountStatus @default(pending)
+  // "percent" or "fixed" (BDT) once approved.
+  discountType      String?        @map("discount_type") @db.VarChar(10)
+  discountValue     Decimal?       @map("discount_value") @db.Decimal(10, 2)
+  adminNote         String?        @map("admin_note") @db.VarChar(300)
+  // The message the assistant gave the customer after the decision.
+  reply             String?        @db.VarChar(1000)
+  decidedBy         String?        @map("decided_by") @db.Uuid
+  decidedAt         DateTime?      @map("decided_at") @db.Timestamptz(6)
+  expiresAt         DateTime?      @map("expires_at") @db.Timestamptz(6)
+  usedAppointmentId String?        @map("used_appointment_id") @db.Uuid
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  service Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("discount_requests")
+}
+
+// Payment options managed by admins (cash, card, bKash, Nagad, ...). Customers pick one when booking.
+model PaymentMethod {
+  id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code              String      @unique @db.VarChar(30)
+  name              String      @db.VarChar(60)
+  type              PaymentType
+  // Shown to the customer, e.g. "Send money to 01XXXXXXXXX (Personal), then enter the TrxID."
+  instructions      String?     @db.VarChar(500)
+  accountNumber     String?     @map("account_number") @db.VarChar(40)
+  // Wallet-style methods need the customer's transaction reference so an admin can verify it.
+  requiresReference Boolean     @default(false) @map("requires_reference")
+  isActive          Boolean     @default(true) @map("is_active")
+  sortOrder         Int         @default(0) @map("sort_order")
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  appointments Appointment[]
+
+  @@map("payment_methods")
 }

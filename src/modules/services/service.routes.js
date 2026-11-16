@@ -4,22 +4,10 @@ import { prisma } from '../../db/prisma.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { ok } from '../../utils/response.js';
 import { validate } from '../../middleware/validate.js';
+import { loadFieldDefs } from './attributes.js';
+import { toService, withBookingCount as withCount } from './service.mapper.js';
 
 const router = Router();
-
-const toService = (s) => ({
-  id: s.id,
-  name: s.name,
-  description: s.description,
-  price: Number(s.price),
-  durationMinutes: s.durationMinutes,
-  imageUrl: s.imageUrl,
-  category: s.category,
-  isFeatured: s.isFeatured,
-  bookingsCount: s._count?.appointments ?? 0, // how many times the service has been booked
-});
-
-const withCount = { _count: { select: { appointments: true } } };
 
 // Each key maps to a fixed Prisma orderBy, so user input never builds the sort.
 const SORTS = {
@@ -99,7 +87,7 @@ router.get('/:id', validate({ params: z.object({ id: z.uuid() }) }), async (req,
     include: withCount,
   });
   if (!service) throw ApiError.notFound('Service not found');
-  ok(res, toService(service));
+  ok(res, toService(service, { defs: await loadFieldDefs() }));
 });
 
 export default router;

@@ -12,6 +12,8 @@ const createBody = z.object({
   startTime: z.iso.datetime({ offset: true, message: 'startTime must be an ISO 8601 date-time' }),
   address: z.string().trim().min(5, 'Enter the full service address').max(300, 'Address must be at most 300 characters'),
   notes: z.string().trim().max(500).optional(),
+  paymentMethodId: z.uuid('Choose a payment method'),
+  paymentReference: z.string().trim().min(4, 'Enter the transaction ID').max(60).optional(),
 });
 
 const listQuery = z.object({

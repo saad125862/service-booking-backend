@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { ADDRESS, ADMIN_KEY, api, at, auth, dateIn, findService, registerUser } from './helpers.js';
+import { ADDRESS, ADMIN_KEY, api, at, auth, dateIn, findService, paymentMethodId, registerUser } from './helpers.js';
 
 const list = (token, query = {}) => api().get('/api/v1/notifications').set(auth(token)).query(query);
 
@@ -7,7 +7,9 @@ describe('notifications', () => {
   let massage, customer, other, adminToken, appointmentId;
   const day = dateIn(35);
 
+  let CASH;
   beforeAll(async () => {
+    CASH = await paymentMethodId('cash');
     massage = await findService('Swedish Massage');
     customer = await registerUser('notif');
     other = await registerUser('notif-other');
@@ -31,7 +33,7 @@ describe('notifications', () => {
     const booked = await api()
       .post('/api/v1/appointments')
       .set(auth(customer.token))
-      .send({ serviceId: massage.id, startTime: at(day, '10:00'), address: ADDRESS });
+      .send({ serviceId: massage.id, startTime: at(day, '10:00'), address: ADDRESS, paymentMethodId: CASH });
     expect(booked.status).toBe(201);
     appointmentId = booked.body.data.id;
 
@@ -87,7 +89,7 @@ describe('notifications', () => {
     const second = await api()
       .post('/api/v1/appointments')
       .set(auth(other.token))
-      .send({ serviceId: massage.id, startTime: at(day, '13:00'), address: ADDRESS });
+      .send({ serviceId: massage.id, startTime: at(day, '13:00'), address: ADDRESS, paymentMethodId: CASH });
     const id = second.body.data.id;
     await api().patch(`/api/v1/appointments/${id}/cancel`).set(auth(other.token));
 

@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { createApp } from '../src/app.js';
+import { prisma } from '../src/db/prisma.js';
 
 export const app = createApp();
 export const api = () => request(app);
@@ -27,3 +28,6 @@ export async function findService(name) {
 // A date `days` from now as YYYY-MM-DD (UTC, matching BUSINESS_TZ=UTC in tests).
 export const dateIn = (days) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 export const at = (date, hhmm) => `${date}T${hhmm}:00.000Z`;
+
+// Payment methods are seeded; bookings must name one.
+export const paymentMethodId = async (code = 'cash') => (await prisma.paymentMethod.findUnique({ where: { code } })).id;

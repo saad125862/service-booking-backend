@@ -19,6 +19,31 @@ const PHOTOS = {
   'Career Coaching': '1573496359142-b8d87734a5a2',
   'Nutrition Consultation': '1490645935967-10de6ba17061',
 };
+// Payment options offered to customers. The mobile numbers are placeholders: an admin edits
+// them (and can add or disable methods) from the admin screens.
+const PAYMENT_METHODS = [
+  { code: 'cash', name: 'Cash on service', type: 'cash', sortOrder: 1, requiresReference: false, instructions: 'Pay the provider in cash when the service is done.' },
+  { code: 'card', name: 'Card on service', type: 'card', sortOrder: 2, requiresReference: false, instructions: "Pay by debit or credit card on the provider's card machine." },
+  { code: 'bkash', name: 'bKash', type: 'mobile_wallet', sortOrder: 3, requiresReference: true, accountNumber: '01700-000000', instructions: 'Send the amount to 01700-000000 (Personal), then enter the bKash transaction ID.' },
+  { code: 'nagad', name: 'Nagad', type: 'mobile_wallet', sortOrder: 4, requiresReference: true, accountNumber: '01800-000000', instructions: 'Send the amount to 01800-000000 (Personal), then enter the Nagad transaction ID.' },
+];
+
+// Example custom fields for the admin's dynamic add-service form (admins can add more).
+const SERVICE_FIELDS = [
+  { key: 'staff_level', label: 'Specialist level', type: 'select', options: ['Standard', 'Senior specialist'], required: false, sortOrder: 1 },
+  { key: 'materials_included', label: 'Materials included', type: 'boolean', required: false, sortOrder: 2 },
+  { key: 'what_to_expect', label: 'What to expect', type: 'textarea', required: false, sortOrder: 3 },
+];
+
+// Values for those fields on some demo services.
+const ATTRIBUTES = {
+  'Swedish Massage': { staff_level: 'Senior specialist', materials_included: true, what_to_expect: 'Warm oils, soft music and a full-body relaxing massage. Please arrive 5 minutes early.' },
+  'Classic Facial': { staff_level: 'Senior specialist', materials_included: true },
+  'Home Deep Cleaning': { staff_level: 'Standard', materials_included: true, what_to_expect: 'A team of two brings equipment and eco-friendly products. Please clear fragile items.' },
+  'Plumbing Repair Visit': { staff_level: 'Standard', materials_included: false, what_to_expect: 'Diagnosis and repair on the spot. Replacement parts are charged separately.' },
+  'Personal Training Session': { staff_level: 'Senior specialist', materials_included: false },
+};
+
 const img = (name) => `https://images.unsplash.com/photo-${PHOTOS[name]}?w=800&q=70&auto=format&fit=crop`;
 
 // [name, category, price in BDT (Bangladeshi taka), durationMinutes, isFeatured, description]
@@ -46,8 +71,15 @@ const FORCE = process.env.SEED_FORCE === 'true';
 
 async function main() {
   for (const [name, category, price, durationMinutes, isFeatured, description] of SERVICES) {
-    const data = { description, price, durationMinutes, imageUrl: img(name), category, isFeatured };
+    const data = { description, price, durationMinutes, imageUrl: img(name), category, isFeatured, attributes: ATTRIBUTES[name] ?? {} };
     await prisma.service.upsert({ where: { name }, update: FORCE ? data : {}, create: { name, ...data } });
+  }
+
+  for (const field of SERVICE_FIELDS) {
+    await prisma.serviceField.upsert({ where: { key: field.key }, update: FORCE ? field : {}, create: field });
+  }
+  for (const method of PAYMENT_METHODS) {
+    await prisma.paymentMethod.upsert({ where: { code: method.code }, update: FORCE ? method : {}, create: method });
   }
 
   // Demo account for reviewers (documented in the README).

@@ -2,6 +2,7 @@
 
 REST API for **Seba**, a service booking and management app: customers browse services, book appointments, manage their bookings, and ask an AI assistant (English, Bangla or Banglish) for recommendations.
 
+- **Roles:** customer and admin accounts, with admin tools for services (dynamic form), payments, discounts, bookings, a dashboard and sales reports
 - **Currency:** all prices are in **BDT** (Bangladeshi taka, ৳)
 - **Stack:** Node.js 24, Express 5, PostgreSQL 16, Prisma 7, JWT, Zod, Gemini
 - **Interactive API docs (Swagger UI):** `http://localhost:3000/api/docs` (spec: [`docs/openapi.yaml`](docs/openapi.yaml))
@@ -131,6 +132,19 @@ A background job also marks confirmed appointments as `completed` once their end
 - **Grounded:** the current service catalog is injected into every request, so it cannot invent services or prices. Returned ids are validated against the database.
 - **Safe:** the API key lives only on the server. Input is limited (500 characters, 10 history messages), requests are rate-limited per user (10/min), off-topic and prompt-injection attempts are declined.
 - **Resilient:** 20 s timeout, one retry on a fallback model, and a clear `503 AI_UNAVAILABLE` if both fail.
+
+## Admin, payments, discounts and notifications
+
+Two kinds of accounts: **customers** and **admins** (`role` on the user; public sign-up only ever creates customers, the demo admin is seeded). Everything under `/api/v1/admin` needs an admin's JWT; the role is read from the database on every request. Full details and examples are in Swagger.
+
+| Area | What it does |
+|---|---|
+| **Services (dynamic form)** | Admins add, edit and hide services. The form is dynamic: admins can define **custom fields** (text, long text, number, yes/no, dropdown; required or optional) with `/admin/service-fields`, and each service stores values for them in `attributes`. The API validates the values against the field definitions; customers see the filled values on the service page. |
+| **Payment options** | Admins manage the payment methods customers can choose when booking: cash, card, bKash, Nagad, bank and so on (`/admin/payment-methods`). Wallet-style methods ask for the customer's transaction ID, and an admin verifies it (`PATCH /admin/appointments/{id}/payment`). Money is not processed by this server, so no payment-provider secrets are needed; a gateway could be plugged in behind the same fields later. |
+| **Discounts** | If a customer asks the AI assistant for a discount, the assistant never grants one: it files a request, tells the customer (in English, Bangla or Banglish) that an admin is reviewing it, and waits. An admin approves (percent up to 90%, or a fixed BDT amount, with an expiry) or declines, and the assistant answers the customer in their language (Gemini, with template fallback). An approved discount belongs to **that customer only** and is used by **one order**; it is applied automatically to their next booking and then consumed, so later orders pay the current price. Cancelling that booking gives it back until it expires. |
+| **Bookings** | Admins see all bookings, filter them, and confirm / complete / cancel them. Each booking stores a **price snapshot** (list price, discount, amount to pay), so later price edits never rewrite past sales. |
+| **Dashboard and reports** | `GET /admin/dashboard` (totals, sales today / this month / all time, pending pipeline, bookings by status, top services, last 14 days, latest bookings) and `GET /admin/reports/sales` (date range grouped by day, service, category or payment method, with CSV export). **Sales = price paid for bookings that are confirmed or completed**, dated by the service date in `BUSINESS_TZ`. |
+| **Notifications** | In-app notifications for booking events, payment verification and discount decisions (customers), and new bookings, cancellations and discount requests (admins): `/notifications`, `/notifications/unread-count`, mark read / read all. |
 
 ## Security
 

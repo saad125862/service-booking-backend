@@ -1,14 +1,16 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { ADDRESS, ADMIN_KEY, api, at, auth, dateIn, findService, registerUser } from './helpers.js';
+import { ADDRESS, ADMIN_KEY, api, at, auth, dateIn, findService, paymentMethodId, registerUser } from './helpers.js';
 
+let CASH;
 const book = (token, serviceId, startTime, notes) =>
-  api().post('/api/v1/appointments').set(auth(token)).send({ serviceId, startTime, address: ADDRESS, notes });
+  api().post('/api/v1/appointments').set(auth(token)).send({ serviceId, startTime, address: ADDRESS, paymentMethodId: CASH, notes });
 
 describe('availability and booking', () => {
   let massage, facial, a, b, c;
   const day = dateIn(20);
 
   beforeAll(async () => {
+    CASH = await paymentMethodId('cash');
     massage = await findService('Swedish Massage'); // 60 min
     facial = await findService('Classic Facial'); // 45 min
     [a, b, c] = await Promise.all([registerUser('a'), registerUser('b'), registerUser('c')]);
@@ -58,7 +60,7 @@ describe('availability and booking', () => {
     const missing = await api()
       .post('/api/v1/appointments')
       .set(auth(c.token))
-      .send({ serviceId: massage.id, startTime: at(day, '15:00') });
+      .send({ serviceId: massage.id, startTime: at(day, '15:00'), paymentMethodId: CASH });
     expect(missing.status).toBe(400);
     expect(missing.body.error.details.map((d) => d.field)).toContain('address');
 
@@ -134,7 +136,12 @@ describe('availability and booking', () => {
     const patch = (status, key = ADMIN_KEY) =>
       api().patch(`/api/v1/admin/appointments/${id}/status`).set('X-Admin-Key', key).send({ status });
 
-    expect((await patch('confirmed', 'wrong-key')).status).toBe(403);
+    expect((await patch('confirmed', 'wrong-key')).status).toBe(401); // no valid key and no login
+    const asCustomer = await api()
+      .patch(`/api/v1/admin/appointments/${id}/status`)
+      .set(auth(b.token))
+      .send({ status: 'confirmed' });
+    expect(asCustomer.status).toBe(403); // a customer's JWT is not an admin's
     expect((await patch('completed')).body.error.code).toBe('INVALID_TRANSITION'); // pending -> completed
     expect((await patch('confirmed')).body.data.status).toBe('confirmed');
 

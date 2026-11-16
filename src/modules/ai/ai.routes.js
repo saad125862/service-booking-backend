@@ -23,7 +23,7 @@ const router = Router();
 
 // Auth first so the limiter can key on the user id; the Gemini key never leaves the server.
 router.post('/chat', requireAuth, aiLimiter, validate({ body: chatBody }), async (req, res) => {
-  ok(res, await aiService.chat(req.valid.body));
+  ok(res, await aiService.chat({ ...req.valid.body, userId: req.user.id }));
 });
 
 export default router;

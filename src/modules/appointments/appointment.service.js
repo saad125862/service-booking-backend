@@ -5,9 +5,10 @@ import { ApiError } from '../../utils/ApiError.js';
 import { formatDateTime, localDateString, zonedToUtcMs } from '../../utils/time.js';
 import { bookableDateRange, generateSlots } from './slots.js';
 import { notify, notifyAdmins } from '../notifications/notification.service.js';
+import { findApplicableDiscount, restoreDiscountForAppointment } from '../discounts/discount.service.js';
 
 const ACTIVE = [STATUS.PENDING, STATUS.CONFIRMED];
-const withService = { service: true };
+const withService = { service: true, paymentMethod: true };
 
 export const toAppointment = (a) => ({
   id: a.id,
@@ -19,6 +20,16 @@ export const toAppointment = (a) => ({
   address: a.address,
   notes: a.notes,
   createdAt: a.createdAt,
+  // Price snapshot taken when the booking was made (list price, discount, amount to pay).
+  price: Number(a.price),
+  originalPrice: Number(a.originalPrice),
+  discountAmount: Number(a.discountAmount),
+  paymentStatus: a.paymentStatus,
+  paymentReference: a.paymentReference,
+  paidAt: a.paidAt,
+  paymentMethod: a.paymentMethod
+    ? { id: a.paymentMethod.id, code: a.paymentMethod.code, name: a.paymentMethod.name, type: a.paymentMethod.type }
+    : null,
   service: {
     id: a.service.id,
     name: a.service.name,
@@ -73,7 +84,7 @@ export async function getAvailability(serviceId, date) {
   };
 }
 
-export async function createAppointment(userId, { serviceId, startTime, address, notes }) {
+export async function createAppointment(userId, { serviceId, startTime, address, notes, paymentMethodId, paymentReference }) {
   const tz = env.BUSINESS_TZ;
   const service = await getActiveService(serviceId);
   const startMs = new Date(startTime).getTime();
@@ -103,17 +114,47 @@ export async function createAppointment(userId, { serviceId, startTime, address,
     throw ApiError.conflict('SLOT_UNAVAILABLE', 'That time slot is no longer available');
   }
 
+  // The chosen payment option must be one an admin has enabled; wallet-style options need
+  // the customer's transaction reference so an admin can verify the payment later.
+  const method = await prisma.paymentMethod.findFirst({ where: { id: paymentMethodId, isActive: true } });
+  if (!method) throw new ApiError(400, 'INVALID_PAYMENT_METHOD', 'Choose one of the available payment methods');
+  const reference = paymentReference?.trim() || null;
+  if (method.requiresReference && (!reference || reference.length < 4)) {
+    throw ApiError.validation([{ field: 'paymentReference', message: `Enter the ${method.name} transaction ID` }]);
+  }
+
   try {
-    const created = await prisma.appointment.create({
-      data: {
-        userId,
-        serviceId,
-        startTime: new Date(slot.start),
-        endTime: new Date(slot.end),
-        address,
-        notes: notes ?? null,
-      },
-      include: withService,
+    // One transaction: apply this customer's approved discount (if any), create the booking and
+    // consume the discount, so a discount can only ever be used by a single order.
+    const created = await prisma.$transaction(async (tx) => {
+      const discount = await findApplicableDiscount(tx, userId, serviceId, service.price);
+      const originalPrice = Number(service.price);
+      const discountAmount = discount ? discount.amount : 0;
+
+      const row = await tx.appointment.create({
+        data: {
+          userId,
+          serviceId,
+          startTime: new Date(slot.start),
+          endTime: new Date(slot.end),
+          address,
+          notes: notes ?? null,
+          originalPrice,
+          discountAmount,
+          price: originalPrice - discountAmount,
+          paymentMethodId: method.id,
+          paymentStatus: method.requiresReference ? 'submitted' : 'unpaid',
+          paymentReference: method.requiresReference ? reference : null,
+        },
+        include: withService,
+      });
+      if (discount) {
+        await tx.discountRequest.update({
+          where: { id: discount.request.id },
+          data: { status: 'used', usedAppointmentId: row.id },
+        });
+      }
+      return row;
     });
     const appointment = toAppointment(created);
     await announceNewBooking(userId, appointment);
@@ -211,6 +252,7 @@ export async function cancelAppointment(userId, id) {
       `Only pending appointments can be cancelled (this one is ${existing.status})`,
     );
   }
+  await restoreDiscountForAppointment(prisma, id);
   const cancelled = await getAppointment(userId, id);
   const customer = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
   await notifyAdmins({
@@ -240,6 +282,7 @@ export async function adminSetStatus(id, newStatus) {
   if (count === 0) {
     throw ApiError.conflict('INVALID_TRANSITION', `Cannot change status from ${row.status} to ${newStatus}`);
   }
+  if (newStatus === STATUS.CANCELLED) await restoreDiscountForAppointment(prisma, id);
   await announceStatusChange(row, newStatus);
   return toAppointment(row);
 }

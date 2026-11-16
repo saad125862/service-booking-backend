@@ -14,6 +14,8 @@ import { appointmentRoutes, availabilityRoutes } from './modules/appointments/ap
 import adminRoutes from './modules/admin/admin.routes.js';
 import aiRoutes from './modules/ai/ai.routes.js';
 import notificationRoutes from './modules/notifications/notification.routes.js';
+import paymentRoutes from './modules/payments/payment.routes.js';
+import discountRoutes from './modules/discounts/discount.routes.js';
 import { docsRouter } from './docs/swagger.js';
 
 export function createApp() {
@@ -59,6 +61,8 @@ export function createApp() {
   api.use('/admin', adminRoutes);
   api.use('/ai', aiRoutes);
   api.use('/notifications', notificationRoutes);
+  api.use('/payment-methods', paymentRoutes);
+  api.use('/discount-requests', discountRoutes);
 
   app.use('/api/v1', api);
 

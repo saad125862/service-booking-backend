@@ -7,6 +7,13 @@ info:
 
     **Currency:** all prices are in **BDT** (Bangladeshi taka, ৳).
 
+    **Accounts and access:** customers (`role: user`) use the customer endpoints. Endpoints under `/admin` need the JWT of an
+    **admin** account (`403` for customers); the role is checked in the database on every request. Only the booking status route
+    also accepts the static `X-Admin-Key` for scripted demos.
+
+    **Sales definition:** sales/revenue = the price paid (after any discount) of bookings that are **confirmed or completed**,
+    dated by the service date in the business time zone. Pending bookings are reported as the *pipeline*.
+
     **Conventions**
     - Base path: `/api/v1`. All bodies are JSON.
     - Success: `{ "success": true, "data": ..., "meta": { ... } }` (`meta` only on paginated lists).
@@ -29,6 +36,13 @@ tags:
   - name: Appointments
   - name: Notifications
   - name: AI assistant
+  - name: Payments
+  - name: Discounts
+  - name: 'Admin: services and custom fields'
+  - name: 'Admin: payment methods'
+  - name: 'Admin: bookings'
+  - name: 'Admin: discount requests'
+  - name: 'Admin: dashboard and reports'
   - name: Admin
 
 paths:
@@ -265,7 +279,7 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateAppointmentRequest' }
-            example: { serviceId: 5d85757b-32b8-4270-8c16-4221f140fa06, startTime: '2026-11-20T04:00:00.000Z', address: 'House 12, Road 5, Dhanmondi, Dhaka', notes: First visit }
+            example: { serviceId: 5d85757b-32b8-4270-8c16-4221f140fa06, startTime: '2026-11-20T04:00:00.000Z', address: 'House 12, Road 5, Dhanmondi, Dhaka', paymentMethodId: 8f6f1c3e-0000-4000-8000-000000000001, notes: First visit }
       responses:
         '201':
           description: Booked
@@ -530,6 +544,587 @@ paths:
             application/json:
               example: { success: false, error: { code: INVALID_TRANSITION, message: Cannot change status from pending to completed } }
 
+  /payment-methods:
+    get:
+      tags: [Payments]
+      summary: Payment options a customer can choose when booking
+      description: Active methods only, set up by admins (cash, card, bKash, Nagad, ...). `requiresReference` means the customer must enter the transaction ID when booking, which an admin then verifies.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Active payment methods
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PaymentMethod' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /discount-requests:
+    get:
+      tags: [Discounts]
+      summary: My discount requests and the assistant's answers
+      description: |
+        Customers ask for a discount through the AI assistant (`POST /ai/chat`). The assistant never grants one: it files a request,
+        tells the customer an admin is reviewing it, and an admin approves (percent or fixed BDT amount) or declines.
+        The decision is written back to the customer in their language in `reply`.
+
+        An approved discount belongs to **that customer only** and is used by **one order**: it is applied automatically when they
+        next book the service (or any service for a general request), then consumed. The next order pays the current price.
+        If that booking is cancelled the discount is given back until it expires.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The customer's requests, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DiscountRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/services:
+    get:
+      tags: ['Admin: services and custom fields']
+      summary: All services, including inactive ones
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: search, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [active, inactive, all], default: all } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        '200':
+          description: A page of services
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminService' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: ['Admin: services and custom fields']
+      summary: Add a service (dynamic form)
+      description: |
+        The form is dynamic: besides the fixed fields, `attributes` carries values for the **custom fields** admins define
+        (see `/admin/service-fields`). Unknown keys, wrong types, bad dropdown values and missing required fields are rejected
+        with `400 VALIDATION_ERROR` and per-field details (`attributes.<key>`).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServiceInput' }
+            example:
+              name: Hot Stone Massage
+              description: Smooth heated stones melt away deep muscle tension.
+              price: 3200
+              durationMinutes: 75
+              category: Wellness
+              imageUrl: https://images.unsplash.com/photo-1544161515-4ab6ce6db874?w=800
+              isFeatured: false
+              attributes: { staff_level: Senior specialist, materials_included: true }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/AdminService' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: A service with this name already exists (`SERVICE_NAME_TAKEN`)
+          content:
+            application/json:
+              example: { success: false, error: { code: SERVICE_NAME_TAKEN, message: A service with this name already exists } }
+
+  /admin/services/{id}:
+    get:
+      tags: ['Admin: services and custom fields']
+      summary: One service (with raw custom-field values)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdPath' }]
+      responses:
+        '200':
+          description: The service
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/AdminService' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    patch:
+      tags: ['Admin: services and custom fields']
+      summary: Edit a service
+      description: Only the fields you send change. If `attributes` is sent it replaces the stored custom values (validated against the current fields).
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdPath' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServiceInput' }
+            example: { price: 3500, isFeatured: true }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/AdminService' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: ['Admin: services and custom fields']
+      summary: Hide a service from customers
+      description: 'Never a hard delete (past bookings and reports refer to it). Re-enable with PATCH and isActive true.'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdPath' }]
+      responses:
+        '200':
+          description: The deactivated service
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/AdminService' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/service-fields:
+    get:
+      tags: ['Admin: services and custom fields']
+      summary: Custom field definitions for the service form
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: All field definitions, including inactive ones
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ServiceField' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: ['Admin: services and custom fields']
+      summary: Add a custom field to the service form
+      description: Types are `text`, `textarea`, `number`, `boolean` and `select` (needs `options`). The key is derived from the label when omitted and cannot change later.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServiceFieldInput' }
+            example: { label: Therapist gender, type: select, options: [Female, Male, No preference], required: false }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/ServiceField' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409':
+          description: Key already used (`FIELD_KEY_TAKEN`)
+          content:
+            application/json:
+              example: { success: false, error: { code: FIELD_KEY_TAKEN, message: A field with the key "therapist_gender" already exists } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/service-fields/{id}:
+    patch:
+      tags: ['Admin: services and custom fields']
+      summary: Edit a field (label, options, required, order, active)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdPath' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { label: Specialist level, required: true, sortOrder: 2 }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/ServiceField' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: ['Admin: services and custom fields']
+      summary: Deactivate a field
+      description: Stored values are kept and come back if the field is re-enabled; customers stop seeing it.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdPath' }]
+      responses:
+        '200':
+          description: The deactivated field
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/ServiceField' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/payment-methods:
+    get:
+      tags: ['Admin: payment methods']
+      summary: All payment methods, including disabled ones
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Payment methods
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PaymentMethod' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: ['Admin: payment methods']
+      summary: Add a payment option
+      description: |
+        Money is not processed by this server. A wallet-style method (`requiresReference: true`, e.g. bKash or Nagad) asks the customer
+        for the transaction ID, and an admin verifies it with `PATCH /admin/appointments/{id}/payment`.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { code: rocket, name: Rocket, type: mobile_wallet, accountNumber: 01900-000000, instructions: 'Send to 01900-000000 (Personal), then enter the transaction ID.', requiresReference: true, sortOrder: 5 }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/PaymentMethod' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409':
+          description: Code already used (`PAYMENT_CODE_TAKEN`)
+          content:
+            application/json:
+              example: { success: false, error: { code: PAYMENT_CODE_TAKEN, message: A payment method with this code already exists } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/payment-methods/{id}:
+    patch:
+      tags: ['Admin: payment methods']
+      summary: Edit a payment option
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdPath' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { accountNumber: 01711-123456, isActive: true }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/PaymentMethod' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: ['Admin: payment methods']
+      summary: Disable a payment option
+      description: Existing bookings keep their payment method.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdPath' }]
+      responses:
+        '200':
+          description: The disabled method
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/PaymentMethod' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/appointments:
+    get:
+      tags: ['Admin: bookings']
+      summary: All bookings
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/AppointmentStatus' } }
+        - { name: paymentStatus, in: query, schema: { type: string, enum: [unpaid, submitted, paid, failed] } }
+        - { name: search, in: query, description: 'Customer name or email, or service name', schema: { type: string } }
+        - { name: from, in: query, description: Service date from (YYYY-MM-DD), schema: { type: string, format: date } }
+        - { name: to, in: query, description: Service date to (YYYY-MM-DD), schema: { type: string, format: date } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200':
+          description: A page of bookings with the customer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminAppointment' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/appointments/{id}:
+    get:
+      tags: ['Admin: bookings']
+      summary: One booking
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdPath' }]
+      responses:
+        '200':
+          description: The booking
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/AdminAppointment' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/appointments/{id}/payment:
+    patch:
+      tags: ['Admin: bookings']
+      summary: Verify or reject a booking's payment
+      description: Marking it `paid` records the time and notifies the customer; `failed` notifies them to contact us or pick another method. Not allowed on cancelled bookings.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdPath' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [paid, failed, unpaid] }
+            example: { status: paid }
+      responses:
+        '200':
+          description: Updated booking
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/AdminAppointment' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Booking is cancelled (`INVALID_STATE`)
+          content:
+            application/json:
+              example: { success: false, error: { code: INVALID_STATE, message: The payment of a cancelled booking cannot be changed } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/discount-requests:
+    get:
+      tags: ['Admin: discount requests']
+      summary: Discount requests from customers
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, declined, used] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: A page of requests with the customer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DiscountRequest' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/discount-requests/{id}/approve:
+    patch:
+      tags: ['Admin: discount requests']
+      summary: Approve with a discount
+      description: |
+        `percent` must be 1-90; `fixed` is a BDT amount and cannot exceed the service price. The discount is valid for `expiresInDays`
+        (default 14), only for that customer and for **one order**. The customer is notified and the assistant's answer is written in
+        their language (Gemini, with a template fallback).
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdPath' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { type: percent, value: 15, expiresInDays: 7, note: Loyal customer }
+      responses:
+        '200':
+          description: The decided request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/DiscountRequest' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Already decided (`NOT_PENDING`)
+          content:
+            application/json:
+              example: { success: false, error: { code: NOT_PENDING, message: This request has already been decided } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/discount-requests/{id}/decline:
+    patch:
+      tags: ['Admin: discount requests']
+      summary: Decline
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdPath' }]
+      requestBody:
+        content:
+          application/json:
+            example: { note: Prices are already discounted }
+      responses:
+        '200':
+          description: The decided request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/DiscountRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Already decided (`NOT_PENDING`)
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/dashboard:
+    get:
+      tags: ['Admin: dashboard and reports']
+      summary: Dashboard numbers
+      description: Totals, sales (today, this month, all time, plus the pending pipeline), bookings by status, top services, the last 14 days and the latest bookings.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Dashboard data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/Dashboard' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/reports/sales:
+    get:
+      tags: ['Admin: dashboard and reports']
+      summary: Sales report
+      description: Revenue, bookings and discounts for a date range (default last 30 days, at most 366), grouped by day, service, category or payment method.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: groupBy, in: query, schema: { type: string, enum: [day, service, category, payment], default: day } }
+      responses:
+        '200':
+          description: The report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/SalesReport' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/reports/sales.csv:
+    get:
+      tags: ['Admin: dashboard and reports']
+      summary: Sales report as CSV
+      description: Same parameters as the JSON report; downloads `seba-sales-<from>_<to>.csv`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: groupBy, in: query, schema: { type: string, enum: [day, service, category, payment], default: day } }
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv:
+              example: |
+                Service,Bookings,Revenue (BDT),Discounts (BDT)
+                Swedish Massage,1,2500,0
+                Total,1,2500,0
+        '403': { $ref: '#/components/responses/Forbidden' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -548,6 +1143,11 @@ components:
       required: true
       schema: { type: string, format: uuid }
   responses:
+    Forbidden:
+      description: Signed in but not an admin
+      content:
+        application/json:
+          example: { success: false, error: { code: FORBIDDEN, message: Admin access required } }
     ValidationError:
       description: Request failed validation
       content:
@@ -625,6 +1225,10 @@ components:
         category: { type: string, example: Wellness }
         isFeatured: { type: boolean }
         bookingsCount: { type: integer, description: Times this service has been booked }
+        attributes:
+          type: array
+          description: Values of the admin-defined custom fields (service details only)
+          items: { $ref: '#/components/schemas/ServiceAttribute' }
     Notification:
       type: object
       properties:
@@ -665,9 +1269,11 @@ components:
       enum: [pending, confirmed, cancelled, completed]
     CreateAppointmentRequest:
       type: object
-      required: [serviceId, startTime, address]
+      required: [serviceId, startTime, address, paymentMethodId]
       properties:
         serviceId: { type: string, format: uuid }
+        paymentMethodId: { type: string, format: uuid, description: One of the active methods from GET /payment-methods }
+        paymentReference: { type: string, minLength: 4, maxLength: 60, description: 'Transaction ID, required when the method requiresReference (e.g. bKash TrxID)' }
         startTime: { type: string, format: date-time }
         address: { type: string, minLength: 5, maxLength: 300, description: Where the service takes place }
         notes: { type: string, maxLength: 500 }
@@ -683,6 +1289,20 @@ components:
         address: { type: string, nullable: true, description: Where the service takes place (null only for bookings made before addresses existed) }
         notes: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
+        price: { type: number, description: Amount to pay in BDT (after any discount), example: 2000 }
+        originalPrice: { type: number, example: 2500 }
+        discountAmount: { type: number, example: 500 }
+        paymentStatus: { type: string, enum: [unpaid, submitted, paid, failed] }
+        paymentReference: { type: string, nullable: true }
+        paidAt: { type: string, format: date-time, nullable: true }
+        paymentMethod:
+          type: object
+          nullable: true
+          properties:
+            id: { type: string, format: uuid }
+            code: { type: string, example: bkash }
+            name: { type: string, example: bKash }
+            type: { type: string, enum: [cash, card, mobile_wallet, bank] }
         service:
           type: object
           properties:
@@ -711,6 +1331,14 @@ components:
       properties:
         reply: { type: string }
         language: { type: string, enum: [en, bn, banglish] }
+        discountRequest:
+          type: object
+          nullable: true
+          description: Set when the customer asked for a discount. The assistant never grants it; an admin decides and the answer arrives later (see GET /discount-requests and notifications).
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string, example: pending }
+            created: { type: boolean, description: false when an open request for the same service already existed }
         recommendedServices:
           type: array
           maxItems: 3
@@ -723,3 +1351,172 @@ components:
               price: { type: number }
               durationMinutes: { type: integer }
               imageUrl: { type: string, nullable: true }
+    ServiceAttribute:
+      type: object
+      properties:
+        key: { type: string, example: staff_level }
+        label: { type: string, example: Specialist level }
+        type: { type: string, enum: [text, textarea, number, boolean, select] }
+        value: { example: Senior specialist }
+    ServiceField:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        key: { type: string, example: staff_level }
+        label: { type: string, example: Specialist level }
+        type: { type: string, enum: [text, textarea, number, boolean, select] }
+        options: { type: array, items: { type: string }, example: [Standard, Senior specialist] }
+        required: { type: boolean }
+        sortOrder: { type: integer }
+        isActive: { type: boolean }
+    ServiceFieldInput:
+      type: object
+      required: [label, type]
+      properties:
+        label: { type: string, minLength: 2, maxLength: 80 }
+        key: { type: string, pattern: '^[a-z][a-z0-9_]{1,39}$', description: Optional; derived from the label }
+        type: { type: string, enum: [text, textarea, number, boolean, select] }
+        options: { type: array, items: { type: string }, description: Required for select }
+        required: { type: boolean, default: false }
+        sortOrder: { type: integer, default: 0 }
+    ServiceInput:
+      type: object
+      required: [name, description, price, durationMinutes, category]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 120 }
+        description: { type: string, minLength: 10, maxLength: 2000 }
+        price: { type: number, minimum: 0, description: BDT }
+        durationMinutes: { type: integer, minimum: 5, maximum: 480 }
+        category: { type: string }
+        imageUrl: { type: string, nullable: true, description: http(s) URL }
+        isFeatured: { type: boolean, default: false }
+        isActive: { type: boolean, default: true }
+        attributes: { type: object, additionalProperties: true, description: Values keyed by custom field key }
+    AdminService:
+      allOf:
+        - $ref: '#/components/schemas/Service'
+        - type: object
+          properties:
+            isActive: { type: boolean }
+            attributeValues: { type: object, additionalProperties: true, description: Raw custom-field values keyed by field key }
+            createdAt: { type: string, format: date-time }
+    PaymentMethod:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string, example: bkash }
+        name: { type: string, example: bKash }
+        type: { type: string, enum: [cash, card, mobile_wallet, bank] }
+        instructions: { type: string, nullable: true }
+        accountNumber: { type: string, nullable: true }
+        requiresReference: { type: boolean }
+        isActive: { type: boolean, description: Admin responses only }
+        sortOrder: { type: integer, description: Admin responses only }
+    AdminAppointment:
+      allOf:
+        - $ref: '#/components/schemas/Appointment'
+        - type: object
+          properties:
+            customer:
+              type: object
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string }
+                email: { type: string }
+                phone: { type: string, nullable: true }
+    DiscountRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, approved, declined, used, expired], description: expired is derived when an approved discount passed its expiry }
+        message: { type: string, description: What the customer asked }
+        language: { type: string, enum: [en, bn, banglish] }
+        service:
+          type: object
+          nullable: true
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            price: { type: number }
+        discountType: { type: string, enum: [percent, fixed], nullable: true }
+        discountValue: { type: number, nullable: true, description: Percent or BDT amount }
+        reply: { type: string, nullable: true, description: 'The assistant''s answer to the customer, in their language' }
+        decidedAt: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        adminNote: { type: string, nullable: true, description: Admin responses only }
+        customer: { type: object, description: Admin responses only }
+    SalesPeriod:
+      type: object
+      properties:
+        bookings: { type: integer }
+        revenue: { type: number }
+    Dashboard:
+      type: object
+      properties:
+        timeZone: { type: string }
+        totals:
+          type: object
+          properties:
+            services: { type: integer }
+            customers: { type: integer }
+            bookings: { type: integer }
+            pendingBookings: { type: integer }
+            pendingDiscountRequests: { type: integer }
+            pendingPayments: { type: integer }
+        sales:
+          type: object
+          properties:
+            today: { $ref: '#/components/schemas/SalesPeriod' }
+            thisMonth: { $ref: '#/components/schemas/SalesPeriod' }
+            allTime: { $ref: '#/components/schemas/SalesPeriod' }
+            pipeline: { type: object, properties: { bookings: { type: integer }, value: { type: number } } }
+        byStatus: { type: object, additionalProperties: { type: integer } }
+        topServices:
+          type: array
+          items:
+            type: object
+            properties:
+              serviceId: { type: string, format: uuid }
+              name: { type: string }
+              bookings: { type: integer }
+              revenue: { type: number }
+        daily:
+          type: array
+          items:
+            type: object
+            properties:
+              date: { type: string, format: date }
+              bookings: { type: integer }
+              revenue: { type: number }
+        recentBookings:
+          type: array
+          items: { $ref: '#/components/schemas/AdminAppointment' }
+    SalesReport:
+      type: object
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        groupBy: { type: string }
+        groupLabel: { type: string }
+        timeZone: { type: string }
+        summary:
+          type: object
+          properties:
+            revenue: { type: number }
+            bookings: { type: integer }
+            averageOrderValue: { type: number }
+            discountsGiven: { type: number }
+            paidAmount: { type: number }
+            unpaidAmount: { type: number }
+            cancelledBookings: { type: integer }
+            pendingBookings: { type: integer }
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              bookings: { type: integer }
+              revenue: { type: number }
+              discounts: { type: number }

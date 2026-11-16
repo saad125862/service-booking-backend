@@ -1,29 +1,23 @@
 import { Router } from 'express';
-import crypto from 'node:crypto';
 import { z } from 'zod';
-import { env } from '../../config/env.js';
-import { ApiError } from '../../utils/ApiError.js';
 import { ok } from '../../utils/response.js';
+import { requireAdmin, requireAdminOrKey } from '../../middleware/admin.js';
 import { validate } from '../../middleware/validate.js';
 import { adminSetStatus } from '../appointments/appointment.service.js';
-
-const sha = (s) => crypto.createHash('sha256').update(String(s)).digest();
-
-// Static API key (header X-Admin-Key). Hashing first makes the comparison constant-time
-// regardless of key length.
-const requireAdminKey = (req, _res, next) => {
-  const provided = req.get('x-admin-key') ?? '';
-  if (!crypto.timingSafeEqual(sha(provided), sha(env.ADMIN_API_KEY))) {
-    throw ApiError.forbidden('Invalid admin key');
-  }
-  next();
-};
+import appointmentRoutes from './admin.appointments.routes.js';
+import discountRoutes from './admin.discounts.routes.js';
+import fieldRoutes from './admin.fields.routes.js';
+import paymentRoutes from './admin.payments.routes.js';
+import reportRoutes from './admin.reports.js';
+import serviceRoutes from './admin.services.routes.js';
 
 const router = Router();
-router.use(requireAdminKey);
 
+// Move a booking through its lifecycle. Accepts an admin's JWT, or the static ops key
+// (X-Admin-Key) used for scripted demos.
 router.patch(
   '/appointments/:id/status',
+  requireAdminOrKey,
   validate({
     params: z.object({ id: z.uuid() }),
     body: z.object({ status: z.enum(['confirmed', 'completed', 'cancelled']) }),
@@ -32,5 +26,14 @@ router.patch(
     ok(res, await adminSetStatus(req.valid.params.id, req.valid.body.status));
   },
 );
+
+// Everything below needs an admin account (role checked on every request).
+router.use(requireAdmin);
+router.use('/services', serviceRoutes);
+router.use('/service-fields', fieldRoutes);
+router.use('/payment-methods', paymentRoutes);
+router.use('/appointments', appointmentRoutes);
+router.use('/discount-requests', discountRoutes);
+router.use('/', reportRoutes);
 
 export default router;

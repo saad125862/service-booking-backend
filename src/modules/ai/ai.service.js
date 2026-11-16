@@ -1,32 +1,32 @@
-import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
-import { env } from '../../config/env.js';
 import { prisma } from '../../db/prisma.js';
-import { ApiError } from '../../utils/ApiError.js';
 import { buildSystemInstruction } from './ai.prompt.js';
+import { generate } from './gemini.js';
+import { createDiscountRequest } from '../discounts/discount.service.js';
 
-const TIMEOUT_MS = 20_000;
 const CATALOG_TTL_MS = 60_000;
 
-// Structured output: the app gets the reply, the detected language, and service ids to render as cards.
+// Structured output: the app gets the reply, the detected language, the service ids to render
+// as cards, and whether the customer is asking for a discount (which needs an admin).
 const RESPONSE_SCHEMA = {
   type: 'object',
   properties: {
     language: { type: 'string', enum: ['en', 'bn', 'banglish'] },
     reply: { type: 'string' },
     recommendedServiceIds: { type: 'array', items: { type: 'string' }, maxItems: 3 },
+    intent: { type: 'string', enum: ['none', 'discount_request'] },
+    discountServiceId: { type: 'string' },
   },
-  required: ['language', 'reply', 'recommendedServiceIds'],
+  required: ['language', 'reply', 'recommendedServiceIds', 'intent', 'discountServiceId'],
 };
 
 const modelOutput = z.object({
   language: z.enum(['en', 'bn', 'banglish']).catch('en'),
   reply: z.string().trim().min(1),
   recommendedServiceIds: z.array(z.string()).default([]),
+  intent: z.enum(['none', 'discount_request']).catch('none'),
+  discountServiceId: z.string().default(''),
 });
-
-let client;
-const getClient = () => (client ??= new GoogleGenAI({ apiKey: env.GEMINI_API_KEY }));
 
 let catalogCache = { at: 0, services: [] };
 async function loadCatalog() {
@@ -46,55 +46,29 @@ function toContents(history, message) {
   return [...turns, { role: 'user', parts: [{ text: message }] }];
 }
 
-async function generate(model, systemInstruction, contents) {
-  const response = await getClient().models.generateContent({
-    model,
-    contents,
-    config: {
-      systemInstruction,
-      responseMimeType: 'application/json',
-      responseJsonSchema: RESPONSE_SCHEMA,
-      temperature: 0.5,
-      maxOutputTokens: 1024,
-      httpOptions: { timeout: TIMEOUT_MS },
-    },
-  });
-  return response.text ?? '';
-}
-
-// Errors worth retrying on the fallback model: overload, rate limit, model gone, timeouts.
-const retryable = (err) =>
-  [404, 429, 500, 502, 503, 504].includes(err?.status) || /timeout|abort|fetch failed/i.test(err?.message ?? '');
-
-export async function chat({ message, history }) {
-  if (!env.GEMINI_API_KEY) {
-    throw new ApiError(503, 'AI_NOT_CONFIGURED', 'The AI assistant is not configured on this server');
-  }
-
+export async function chat({ userId, message, history }) {
   const services = await loadCatalog();
   const systemInstruction = buildSystemInstruction(services.map(catalogLine).join('\n'));
-  const contents = toContents(history, message);
 
-  const models = [env.GEMINI_MODEL, env.GEMINI_FALLBACK_MODEL].filter((m, i, all) => m && all.indexOf(m) === i);
-  let text;
-  for (const [i, model] of models.entries()) {
-    try {
-      text = await generate(model, systemInstruction, contents);
-      break;
-    } catch (err) {
-      console.error(`Gemini call failed (model=${model}, status=${err?.status ?? '-'}):`, err?.message?.slice(0, 200));
-      if (i === models.length - 1 || !retryable(err)) {
-        throw new ApiError(503, 'AI_UNAVAILABLE', 'The assistant is busy right now. Please try again in a moment.');
-      }
-    }
-  }
+  // Throws 503 AI_NOT_CONFIGURED / AI_UNAVAILABLE when Gemini cannot be used.
+  const text = await generate({
+    systemInstruction,
+    contents: toContents(history, message),
+    responseJsonSchema: RESPONSE_SCHEMA,
+  });
 
   let parsed;
   try {
     parsed = modelOutput.parse(JSON.parse(text));
   } catch {
     // Model ignored the schema: still return something useful instead of failing the chat.
-    parsed = { language: 'en', reply: text.trim() || 'Sorry, I could not answer that. Please try again.', recommendedServiceIds: [] };
+    parsed = {
+      language: 'en',
+      reply: text.trim() || 'Sorry, I could not answer that. Please try again.',
+      recommendedServiceIds: [],
+      intent: 'none',
+      discountServiceId: '',
+    };
   }
 
   // Only ever return services that really exist in the catalog (guards against invented ids).
@@ -114,5 +88,21 @@ export async function chat({ message, history }) {
       };
     });
 
-  return { reply: parsed.reply, language: parsed.language, recommendedServices };
+  // The assistant never grants a discount itself: it hands the request to the admins and
+  // tells the customer it is being reviewed. The decision arrives later (see discount.service).
+  let discountRequest = null;
+  if (parsed.intent === 'discount_request') {
+    const me = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+    if (me?.role === 'user') {
+      const serviceId = byId.has(parsed.discountServiceId) ? parsed.discountServiceId : null;
+      const { request, created } = await createDiscountRequest(userId, {
+        serviceId,
+        message,
+        language: parsed.language,
+      });
+      discountRequest = { id: request.id, status: request.status, created };
+    }
+  }
+
+  return { reply: parsed.reply, language: parsed.language, recommendedServices, discountRequest };
 }
