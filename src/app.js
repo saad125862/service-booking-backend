@@ -16,6 +16,7 @@ import aiRoutes from './modules/ai/ai.routes.js';
 import notificationRoutes from './modules/notifications/notification.routes.js';
 import paymentRoutes from './modules/payments/payment.routes.js';
 import discountRoutes from './modules/discounts/discount.routes.js';
+import gatewayRoutes from './modules/gateway/gateway.routes.js';
 import { docsRouter } from './docs/swagger.js';
 
 export function createApp() {
@@ -62,6 +63,7 @@ export function createApp() {
   api.use('/ai', aiRoutes);
   api.use('/notifications', notificationRoutes);
   api.use('/payment-methods', paymentRoutes);
+  api.use('/payments/gateway', gatewayRoutes);
   api.use('/discount-requests', discountRoutes);
 
   app.use('/api/v1', api);

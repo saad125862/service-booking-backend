@@ -5,6 +5,7 @@ import { ApiError } from '../../utils/ApiError.js';
 import { formatDateTime, localDateString, zonedToUtcMs } from '../../utils/time.js';
 import { bookableDateRange, generateSlots } from './slots.js';
 import { notify, notifyAdmins } from '../notifications/notification.service.js';
+import { canPayOnline } from '../gateway/gateway.service.js';
 import { findApplicableDiscount, restoreDiscountForAppointment } from '../discounts/discount.service.js';
 
 const ACTIVE = [STATUS.PENDING, STATUS.CONFIRMED];
@@ -27,8 +28,16 @@ export const toAppointment = (a) => ({
   paymentStatus: a.paymentStatus,
   paymentReference: a.paymentReference,
   paidAt: a.paidAt,
+  // True while an online payment link can still be created for this booking.
+  canPayOnline: canPayOnline(a),
   paymentMethod: a.paymentMethod
-    ? { id: a.paymentMethod.id, code: a.paymentMethod.code, name: a.paymentMethod.name, type: a.paymentMethod.type }
+    ? {
+        id: a.paymentMethod.id,
+        code: a.paymentMethod.code,
+        name: a.paymentMethod.name,
+        type: a.paymentMethod.type,
+        online: Boolean(a.paymentMethod.gatewayProvider),
+      }
     : null,
   service: {
     id: a.service.id,

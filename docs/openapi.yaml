@@ -348,6 +348,66 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /appointments/{id}/pay-online:
+    post:
+      tags: [Payments]
+      summary: Create an online payment link for a booking
+      description: |
+        Creates a hosted checkout (SSLCommerz, aamarPay or the built-in demo checkout) for the booking's **exact price** (after any discount)
+        and returns the URL to open. The booking is marked paid only after the gateway confirms the payment server to server; opening
+        the link or returning to the app proves nothing. Poll `GET /appointments/{id}` and watch `paymentStatus` / `canPayOnline`.
+        Allowed while the booking is not cancelled and `paymentStatus` is `unpaid` or `failed`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                provider:
+                  type: string
+                  enum: [sslcommerz, aamarpay, mock]
+                  description: Defaults to the gateway of the booking's payment method, else the first configured one.
+      responses:
+        '201':
+          description: Checkout created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/PaymentLink' }
+        '400': { description: 'PROVIDER_UNAVAILABLE - that gateway is not configured' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'ALREADY_PAID or NOT_PAYABLE - cancelled, or a manual payment is awaiting verification' }
+        '502': { description: 'PAYMENT_GATEWAY_ERROR - the gateway could not be reached' }
+
+  /payments/gateway/{provider}/{outcome}:
+    post:
+      tags: [Payments]
+      summary: Gateway return / IPN (called by the payment gateway, not by the app)
+      description: |
+        Public endpoint the gateways send the customer's browser to (`success`, `fail`, `cancel`) and, for SSLCommerz, call as an IPN (`ipn`).
+        Answers with a small HTML page (JSON for `ipn`). The payment is confirmed with the gateway before anything is marked paid,
+        and the booking amount must match. GET is accepted too.
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [sslcommerz, aamarpay, mock] } }
+        - { name: outcome, in: path, required: true, schema: { type: string, enum: [success, fail, cancel, ipn] } }
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              description: Gateway fields, e.g. `tran_id`, `val_id` (SSLCommerz) or `mer_txnid` (aamarPay).
+      responses:
+        '200': { description: 'HTML result page: payment received, not completed or cancelled' }
+        '404': { description: Unknown transaction or gateway }
+
   /appointments/{id}/cancel:
     patch:
       tags: [Appointments]
@@ -1296,6 +1356,7 @@ components:
         paymentStatus: { type: string, enum: [unpaid, submitted, paid, failed] }
         paymentReference: { type: string, nullable: true }
         paidAt: { type: string, format: date-time, nullable: true }
+        canPayOnline: { type: boolean, description: An online payment link can still be created for this booking }
         paymentMethod:
           type: object
           nullable: true
@@ -1332,6 +1393,16 @@ components:
       properties:
         reply: { type: string }
         language: { type: string, enum: [en, bn, banglish] }
+        paymentLink:
+          nullable: true
+          description: Set when the customer asked to pay. The server picks their nearest unpaid booking and creates the gateway link for its exact price; the reply text is written by the server, not the model.
+          allOf:
+            - { $ref: '#/components/schemas/PaymentLink' }
+            - type: object
+              properties:
+                appointmentId: { type: string, format: uuid }
+                serviceName: { type: string }
+                startLabel: { type: string }
         discountRequest:
           type: object
           nullable: true
@@ -1401,6 +1472,14 @@ components:
             isActive: { type: boolean }
             attributeValues: { type: object, additionalProperties: true, description: Raw custom-field values keyed by field key }
             createdAt: { type: string, format: date-time }
+    PaymentLink:
+      type: object
+      properties:
+        provider: { type: string, enum: [sslcommerz, aamarpay, mock] }
+        providerName: { type: string, example: aamarPay }
+        amount: { type: number, example: 2000, description: Exactly the booking price in BDT }
+        currency: { type: string, example: BDT }
+        url: { type: string, format: uri, description: Open this in a browser to pay }
     PaymentMethod:
       type: object
       properties:
@@ -1411,6 +1490,9 @@ components:
         instructions: { type: string, nullable: true }
         accountNumber: { type: string, nullable: true }
         requiresReference: { type: boolean }
+        online: { type: boolean, description: Paid through a gateway checkout link after booking }
+        gatewayProvider: { type: string, nullable: true, enum: [sslcommerz, aamarpay, mock], description: Admin responses only }
+        providerReady: { type: boolean, description: Admin responses only; false when the gateway keys are not configured on the server }
         isActive: { type: boolean, description: Admin responses only }
         sortOrder: { type: integer, description: Admin responses only }
     AdminAppointment:

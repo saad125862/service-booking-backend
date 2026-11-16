@@ -3,6 +3,9 @@ import { prisma } from '../../db/prisma.js';
 import { buildSystemInstruction } from './ai.prompt.js';
 import { generate } from './gemini.js';
 import { createDiscountRequest } from '../discounts/discount.service.js';
+import { canPayOnline, startOnlinePayment } from '../gateway/gateway.service.js';
+import { formatDateTime } from '../../utils/time.js';
+import { env } from '../../config/env.js';
 
 const CATALOG_TTL_MS = 60_000;
 
@@ -14,7 +17,7 @@ const RESPONSE_SCHEMA = {
     language: { type: 'string', enum: ['en', 'bn', 'banglish'] },
     reply: { type: 'string' },
     recommendedServiceIds: { type: 'array', items: { type: 'string' }, maxItems: 3 },
-    intent: { type: 'string', enum: ['none', 'discount_clarify', 'discount_request'] },
+    intent: { type: 'string', enum: ['none', 'discount_clarify', 'discount_request', 'pay_booking'] },
     discountServiceId: { type: 'string' },
   },
   required: ['language', 'reply', 'recommendedServiceIds', 'intent', 'discountServiceId'],
@@ -24,7 +27,7 @@ const modelOutput = z.object({
   language: z.enum(['en', 'bn', 'banglish']).catch('en'),
   reply: z.string().trim().min(1),
   recommendedServiceIds: z.array(z.string()).default([]),
-  intent: z.enum(['none', 'discount_clarify', 'discount_request']).catch('none'),
+  intent: z.enum(['none', 'discount_clarify', 'discount_request', 'pay_booking']).catch('none'),
   discountServiceId: z.string().default(''),
 });
 
@@ -53,6 +56,58 @@ const WHICH_SERVICE = {
   bn: 'অবশ্যই। কোন সার্ভিসে ছাড় চান? অনুগ্রহ করে সার্ভিসের নামটি বলুন।',
   banglish: 'Obossoi. Kon service e discount chan? Service er naam ta bolun.',
 };
+
+const money = (n) => `৳${Number(n).toLocaleString('en-US')}`;
+
+// Replies for the payment flow are written here, not by the model, so the amount and service
+// are always exactly the booking's.
+const PAY_TEXT = {
+  link: {
+    en: (name, when, amount) => `Here is your secure payment link for ${name} on ${when}: ${money(amount)}. Tap the button below to pay.`,
+    bn: (name, when, amount) => `${name} (${when}) বুকিংয়ের জন্য আপনার নিরাপদ পেমেন্ট লিংক এখানে: ${money(amount)}। পেমেন্ট করতে নিচের বাটনে ট্যাপ করুন।`,
+    banglish: (name, when, amount) => `${name} (${when}) booking er secure payment link ready: ${money(amount)}. Pay korte niche button e tap korun.`,
+  },
+  none: {
+    en: 'You have no booking waiting for an online payment right now. Book a service first, then I can send you a payment link.',
+    bn: 'এই মুহূর্তে অনলাইনে পেমেন্টের জন্য আপনার কোনো বুকিং অপেক্ষায় নেই। আগে একটি সার্ভিস বুক করুন, তারপর আমি পেমেন্ট লিংক দিতে পারব।',
+    banglish: 'Ekhon online payment er jonno apnar kono booking nei. Age ekta service book korun, tarpor ami payment link dibo.',
+  },
+  unavailable: {
+    en: 'Online payment is not available right now. You can pay in cash or by card when the service is done, or with bKash or Nagad.',
+    bn: 'এখন অনলাইন পেমেন্ট চালু নেই। সার্ভিস শেষে নগদ বা কার্ডে, অথবা বিকাশ/নগদে পেমেন্ট করতে পারবেন।',
+    banglish: 'Ekhon online payment chalu nei. Service sesh e cash ba card e, othoba bKash/Nagad e payment korte paren.',
+  },
+};
+
+/** The customer's nearest upcoming booking that can still be paid online, with a fresh checkout link. */
+async function buildPaymentLink(userId, language) {
+  const candidates = await prisma.appointment.findMany({
+    where: { userId, status: { in: ['pending', 'confirmed'] }, paymentStatus: { in: ['unpaid', 'failed'] } },
+    include: { service: true },
+    orderBy: { startTime: 'asc' },
+    take: 5,
+  });
+  const booking = candidates.find((a) => canPayOnline(a));
+  if (!booking) {
+    const anyPayable = candidates.length > 0;
+    return { reply: PAY_TEXT[anyPayable ? 'unavailable' : 'none'][language] ?? PAY_TEXT.none.en, paymentLink: null };
+  }
+  const session = await startOnlinePayment(userId, booking.id);
+  const when = formatDateTime(booking.startTime.getTime(), env.BUSINESS_TZ);
+  const text = PAY_TEXT.link[language] ?? PAY_TEXT.link.en;
+  return {
+    reply: text(booking.service.name, when, session.amount),
+    paymentLink: {
+      appointmentId: booking.id,
+      serviceName: booking.service.name,
+      startLabel: when,
+      amount: session.amount,
+      provider: session.provider,
+      providerName: session.providerName,
+      url: session.url,
+    },
+  };
+}
 
 const toRecommended = (s) => ({
   id: s.id,
@@ -121,5 +176,15 @@ export async function chat({ userId, message, history }) {
     }
   }
 
-  return { reply, language: parsed.language, recommendedServices, discountRequest };
+  // Paying: the app (not the model) finds the booking and creates the gateway link for its exact price.
+  let paymentLink = null;
+  if (parsed.intent === 'pay_booking') {
+    const me = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+    if (me?.role === 'user') {
+      ({ reply, paymentLink } = await buildPaymentLink(userId, parsed.language));
+      recommendedServices = [];
+    }
+  }
+
+  return { reply, language: parsed.language, recommendedServices, discountRequest, paymentLink };
 }

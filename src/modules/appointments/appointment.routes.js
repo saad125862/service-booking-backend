@@ -4,6 +4,7 @@ import { created, ok } from '../../utils/response.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import * as svc from './appointment.service.js';
+import { startOnlinePayment } from '../gateway/gateway.service.js';
 
 const idParams = z.object({ id: z.uuid() });
 
@@ -37,6 +38,12 @@ appointmentRoutes.get('/', validate({ query: listQuery }), async (req, res) => {
 
 appointmentRoutes.get('/:id', validate({ params: idParams }), async (req, res) => {
   ok(res, await svc.getAppointment(req.user.id, req.valid.params.id));
+});
+
+// Creates a gateway checkout link for this booking's exact price.
+const payBody = z.object({ provider: z.enum(['sslcommerz', 'aamarpay', 'mock']).optional() });
+appointmentRoutes.post('/:id/pay-online', validate({ params: idParams, body: payBody }), async (req, res) => {
+  created(res, await startOnlinePayment(req.user.id, req.valid.params.id, req.valid.body));
 });
 
 appointmentRoutes.patch('/:id/cancel', validate({ params: idParams }), async (req, res) => {

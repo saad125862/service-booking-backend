@@ -22,6 +22,18 @@ const schema = z.object({
     .default('UTC')
     .refine(isValidTimeZone, 'BUSINESS_TZ must be a valid IANA time zone, e.g. Asia/Dhaka'),
   CORS_ORIGINS: z.string().default('*'),
+
+  // Online card / wallet payments. A provider is offered to customers only when it is configured.
+  // PUBLIC_API_URL is where the gateways send the customer back (must be reachable from the browser).
+  PUBLIC_API_URL: z.string().default('http://localhost:3000'),
+  SSLCOMMERZ_STORE_ID: z.string().default(''),
+  SSLCOMMERZ_STORE_PASSWORD: z.string().default(''),
+  SSLCOMMERZ_SANDBOX: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+  AAMARPAY_STORE_ID: z.string().default(''),
+  AAMARPAY_SIGNATURE_KEY: z.string().default(''),
+  AAMARPAY_SANDBOX: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+  // A built-in fake checkout page for demos and tests. On by default outside production.
+  GATEWAY_MOCK_ENABLED: z.enum(['true', 'false']).optional().transform((v) => (v === undefined ? undefined : v === 'true')),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -34,5 +46,8 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-export const env = parsed.data;
+export const env = {
+  ...parsed.data,
+  GATEWAY_MOCK_ENABLED: parsed.data.GATEWAY_MOCK_ENABLED ?? parsed.data.NODE_ENV !== 'production',
+};
 export const isProd = env.NODE_ENV === 'production';

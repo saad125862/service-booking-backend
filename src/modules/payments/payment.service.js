@@ -1,4 +1,5 @@
 import { prisma } from '../../db/prisma.js';
+import { PROVIDERS } from '../gateway/providers.js';
 
 // Payment options are configured by admins. The API records the customer's choice (and the
 // transaction reference for wallet payments such as bKash) and an admin verifies it; no money
@@ -12,11 +13,21 @@ export const toPaymentMethod = (m, { admin = false } = {}) => ({
   instructions: m.instructions,
   accountNumber: m.accountNumber,
   requiresReference: m.requiresReference,
-  ...(admin && { isActive: m.isActive, sortOrder: m.sortOrder }),
+  // Online methods are paid through a gateway: the customer gets a checkout link after booking.
+  online: Boolean(m.gatewayProvider),
+  ...(admin && {
+    gatewayProvider: m.gatewayProvider,
+    providerReady: m.gatewayProvider ? Boolean(PROVIDERS[m.gatewayProvider]?.isConfigured()) : true,
+    isActive: m.isActive,
+    sortOrder: m.sortOrder,
+  }),
 });
 
-export const listPaymentMethods = ({ includeInactive = false } = {}) =>
-  prisma.paymentMethod.findMany({
+export async function listPaymentMethods({ includeInactive = false } = {}) {
+  const rows = await prisma.paymentMethod.findMany({
     where: includeInactive ? {} : { isActive: true },
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
   });
+  // Customers never see an online option whose gateway is not configured on this server.
+  return includeInactive ? rows : rows.filter((m) => !m.gatewayProvider || PROVIDERS[m.gatewayProvider]?.isConfigured());
+}

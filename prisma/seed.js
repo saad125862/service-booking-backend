@@ -25,6 +25,9 @@ const PAYMENT_METHODS = [
   { code: 'cash', name: 'Cash on service', type: 'cash', sortOrder: 1, requiresReference: false, instructions: 'Pay the provider in cash when the service is done.' },
   { code: 'card', name: 'Card on service', type: 'card', sortOrder: 2, requiresReference: false, instructions: "Pay by debit or credit card on the provider's card machine." },
   { code: 'bkash', name: 'bKash', type: 'mobile_wallet', sortOrder: 3, requiresReference: true, accountNumber: '01700-000000', instructions: 'Send the amount to 01700-000000 (Personal), then enter the bKash transaction ID.' },
+  { code: 'sslcommerz', name: 'Pay online (SSLCommerz)', type: 'card', sortOrder: 5, requiresReference: false, gatewayProvider: 'sslcommerz', instructions: 'Pay securely online with a card, bKash, Nagad or Rocket. You get a payment link after booking.' },
+  { code: 'aamarpay', name: 'Pay online (aamarPay)', type: 'card', sortOrder: 6, requiresReference: false, gatewayProvider: 'aamarpay', instructions: 'Pay securely online with a card or mobile wallet. You get a payment link after booking.' },
+  { code: 'demo_gateway', name: 'Pay online (demo checkout)', type: 'card', sortOrder: 7, requiresReference: false, gatewayProvider: 'mock', instructions: 'A pretend online checkout for demos. No real money moves.' },
   { code: 'nagad', name: 'Nagad', type: 'mobile_wallet', sortOrder: 4, requiresReference: true, accountNumber: '01800-000000', instructions: 'Send the amount to 01800-000000 (Personal), then enter the Nagad transaction ID.' },
 ];
 
