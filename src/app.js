@@ -7,6 +7,9 @@ import { env } from './config/env.js';
 import { query } from './db/pool.js';
 import { ok } from './utils/response.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
+import authRoutes from './modules/auth/auth.routes.js';
+import userRoutes from './modules/users/user.routes.js';
+import serviceRoutes from './modules/services/service.routes.js';
 
 export function createApp() {
   const app = express();
@@ -40,6 +43,10 @@ export function createApp() {
     await query('SELECT 1');
     ok(res, { status: 'ok', uptime: Math.round(process.uptime()) });
   });
+
+  api.use('/auth', authRoutes);
+  api.use('/users', userRoutes);
+  api.use('/services', serviceRoutes);
 
   app.use('/api/v1', api);
 

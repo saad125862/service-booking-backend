@@ -1,0 +1,9 @@
+// Validates params/query/body against zod schemas and exposes the parsed values as req.valid.
+// (Express 5 makes req.query read-only, so parsed values live on req.valid instead.)
+export const validate = (schemas) => (req, _res, next) => {
+  req.valid = {};
+  for (const key of ['params', 'query', 'body']) {
+    if (schemas[key]) req.valid[key] = schemas[key].parse(req[key] ?? {});
+  }
+  next();
+};
