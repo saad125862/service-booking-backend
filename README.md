@@ -137,11 +137,14 @@ bcrypt password hashing, JWT (HS256) with expiry, constant-time-style login erro
 
 The same `Dockerfile` runs locally and on Render.
 
-1. **Neon:** create a project and database. Copy the **pooled** connection string for the app and the **direct** one for migrations.
-2. **Render:** New Web Service → connect this repo → **Docker**. Set the variables from [`.env.production.example`](.env.production.example): `NODE_ENV=production`, `DATABASE_URL` (pooled), `DATABASE_SSL=true`, `JWT_SECRET`, `ADMIN_API_KEY`, `GEMINI_API_KEY`, `CORS_ORIGINS`, `BUSINESS_TZ`.
-3. Set the **Pre-Deploy Command** to `npx prisma migrate deploy` (with `DATABASE_URL` set to the direct Neon URL for that command, or run it once from your machine).
-4. Seed once: `DATABASE_URL=<direct url> npm run seed`.
-5. Set the health check path to `/api/v1/health`.
+1. **Neon:** create a project (same region as Render, e.g. Singapore). From **Connect**, copy the **direct** connection string (pooling off, no `-pooler` in the host). The image runs `prisma migrate deploy` on start, which needs a session-level connection, so use the direct string for the app too. Traffic here is small, so pooling isn't needed.
+2. **Render:** New Web Service → this repo → **Docker**, region Singapore, free instance. Set the variables from [`.env.production.example`](.env.production.example): `NODE_ENV=production`, `DATABASE_URL`, `DATABASE_SSL=true`, `JWT_SECRET`, `ADMIN_API_KEY`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL`, `CORS_ORIGINS`, `BUSINESS_TZ`.
+3. Set the health check path to `/api/v1/health`.
+4. Migrations run automatically on every start (a no-op when up to date).
+5. Seed once from your machine (the seed is idempotent):
+   ```bash
+   DATABASE_URL="<direct url>" DATABASE_SSL=true node --env-file=.env prisma/seed.js
+   ```
 
 Free-tier note: Render sleeps after inactivity and Neon autosuspends, so the first request after idle can take 30-60 s.
 

@@ -20,4 +20,6 @@ USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["npm", "start"]
+# Apply any pending migrations (a no-op when up to date), then start the API.
+# Use Neon's DIRECT connection string: migrations need a session-level connection.
+CMD ["sh", "-c", "npx prisma migrate deploy && node src/server.js"]
