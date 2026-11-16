@@ -10,6 +10,8 @@ import { errorHandler, notFound } from './middleware/errorHandler.js';
 import authRoutes from './modules/auth/auth.routes.js';
 import userRoutes from './modules/users/user.routes.js';
 import serviceRoutes from './modules/services/service.routes.js';
+import { appointmentRoutes, availabilityRoutes } from './modules/appointments/appointment.routes.js';
+import adminRoutes from './modules/admin/admin.routes.js';
 
 export function createApp() {
   const app = express();
@@ -47,6 +49,9 @@ export function createApp() {
   api.use('/auth', authRoutes);
   api.use('/users', userRoutes);
   api.use('/services', serviceRoutes);
+  api.use('/services', availabilityRoutes);
+  api.use('/appointments', appointmentRoutes);
+  api.use('/admin', adminRoutes);
 
   app.use('/api/v1', api);
 

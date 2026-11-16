@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isValidTimeZone } from '../utils/time.js';
 
 // Validate configuration once at boot so a bad deployment fails fast and loudly.
 const schema = z.object({
@@ -14,7 +15,10 @@ const schema = z.object({
   GEMINI_API_KEY: z.string().default(''),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
   ADMIN_API_KEY: z.string().min(16, 'ADMIN_API_KEY must be at least 16 characters'),
-  BUSINESS_TZ: z.string().default('UTC'),
+  BUSINESS_TZ: z
+    .string()
+    .default('UTC')
+    .refine(isValidTimeZone, 'BUSINESS_TZ must be a valid IANA time zone, e.g. Asia/Dhaka'),
   CORS_ORIGINS: z.string().default('*'),
 });
 

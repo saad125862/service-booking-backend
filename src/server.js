@@ -1,12 +1,15 @@
 import { env } from './config/env.js';
 import { pool } from './db/pool.js';
 import { createApp } from './app.js';
+import { startCompletionJob } from './jobs/completeAppointments.js';
 
 const app = createApp();
 
 const server = app.listen(env.PORT, () => {
   console.log(`API listening on port ${env.PORT} (${env.NODE_ENV})`);
 });
+
+startCompletionJob();
 
 const shutdown = (signal) => {
   console.log(`${signal} received, shutting down`);
