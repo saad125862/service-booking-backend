@@ -8,7 +8,7 @@ export const notFound = (req, _res, next) => {
 
 // Express 5 forwards rejected promises from async handlers here automatically.
 // eslint-disable-next-line no-unused-vars
-export const errorHandler = (err, _req, res, _next) => {
+export const errorHandler = (err, req, res, _next) => {
   let status = 500;
   let code = 'INTERNAL_ERROR';
   let message = 'Something went wrong';
@@ -28,7 +28,9 @@ export const errorHandler = (err, _req, res, _next) => {
   } else if (err?.type === 'entity.too.large') {
     status = 413;
     code = 'PAYLOAD_TOO_LARGE';
-    message = 'Request body too large';
+    message = req.originalUrl?.includes('/uploads/')
+      ? 'The photo is too large. The limit is 5 MB.'
+      : 'Request body too large';
   }
 
   if (status >= 500) {

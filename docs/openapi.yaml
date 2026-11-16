@@ -348,6 +348,59 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /admin/uploads/image:
+    post:
+      tags: ['Admin: services and custom fields']
+      summary: Upload a service photo
+      description: |
+        Send the raw image bytes as the request body with `Content-Type` `image/jpeg`, `image/png` or `image/webp` (up to 5 MB).
+        The real file type is checked from the file's first bytes. Returns a public `url`; pass it as `imageUrl` when
+        creating or editing a service. Photos are stored in the database, so they survive redeploys.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          image/jpeg: { schema: { type: string, format: binary } }
+          image/png: { schema: { type: string, format: binary } }
+          image/webp: { schema: { type: string, format: binary } }
+      responses:
+        '201':
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      url: { type: string, format: uri }
+                      mimeType: { type: string, example: image/png }
+                      sizeBytes: { type: integer }
+        '400': { description: 'NO_FILE - the body was empty' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { description: 'The photo is larger than 5 MB' }
+        '415': { description: 'UNSUPPORTED_FILE - not a JPG, PNG or WebP image' }
+
+  /media/{id}:
+    get:
+      tags: [Services]
+      summary: View an uploaded photo
+      description: Public. Served with long-lived cache headers and cross-origin embedding allowed.
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      responses:
+        '200':
+          description: The image
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /appointments/{id}/pay-online:
     post:
       tags: [Payments]

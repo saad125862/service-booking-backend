@@ -10,6 +10,7 @@ import fieldRoutes from './admin.fields.routes.js';
 import paymentRoutes from './admin.payments.routes.js';
 import reportRoutes from './admin.reports.js';
 import serviceRoutes from './admin.services.routes.js';
+import { uploadRoutes } from '../media/media.routes.js';
 
 const router = Router();
 
@@ -29,6 +30,7 @@ router.patch(
 
 // Everything below needs an admin account (role checked on every request).
 router.use(requireAdmin);
+router.use('/uploads', uploadRoutes);
 router.use('/services', serviceRoutes);
 router.use('/service-fields', fieldRoutes);
 router.use('/payment-methods', paymentRoutes);

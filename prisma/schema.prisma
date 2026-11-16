@@ -222,6 +222,18 @@ model PaymentMethod {
   @@map("payment_methods")
 }
 
+// An uploaded photo (service pictures), stored in the database so it survives redeploys.
+model Media {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  mimeType   String   @map("mime_type") @db.VarChar(30)
+  sizeBytes  Int      @map("size_bytes")
+  data       Bytes
+  uploadedBy String?  @map("uploaded_by") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("media")
+}
+
 // One attempt to pay a booking online. The amount is the booking price at the time the link was
 // made; the gateway is asked to confirm it server-to-server before the booking is marked paid.
 model PaymentSession {
