@@ -25,8 +25,10 @@ const updateProfileBody = z
       .or(z.literal(''))
       .nullable()
       .optional(),
+    // null or empty string clears the default address
+    address: z.string().trim().min(5, 'Enter the full address').max(300).or(z.literal('')).nullable().optional(),
   })
-  .refine((b) => b.name !== undefined || b.phone !== undefined, {
+  .refine((b) => b.name !== undefined || b.phone !== undefined || b.address !== undefined, {
     message: 'Provide at least one field to update',
   });
 
@@ -46,10 +48,11 @@ router.get('/me', async (req, res) => {
 });
 
 router.patch('/me', validate({ body: updateProfileBody }), async (req, res) => {
-  const { name, phone } = req.valid.body;
+  const { name, phone, address } = req.valid.body;
   const data = {};
   if (name !== undefined) data.name = name;
   if (phone !== undefined) data.phone = phone || null;
+  if (address !== undefined) data.address = address || null;
 
   try {
     ok(res, toUser(await prisma.user.update({ where: { id: req.user.id }, data })));

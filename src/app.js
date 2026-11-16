@@ -13,6 +13,7 @@ import serviceRoutes from './modules/services/service.routes.js';
 import { appointmentRoutes, availabilityRoutes } from './modules/appointments/appointment.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
 import aiRoutes from './modules/ai/ai.routes.js';
+import notificationRoutes from './modules/notifications/notification.routes.js';
 import { docsRouter } from './docs/swagger.js';
 
 export function createApp() {
@@ -57,6 +58,7 @@ export function createApp() {
   api.use('/appointments', appointmentRoutes);
   api.use('/admin', adminRoutes);
   api.use('/ai', aiRoutes);
+  api.use('/notifications', notificationRoutes);
 
   app.use('/api/v1', api);
 

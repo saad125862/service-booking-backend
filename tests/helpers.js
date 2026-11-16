@@ -4,6 +4,7 @@ import { createApp } from '../src/app.js';
 export const app = createApp();
 export const api = () => request(app);
 export const ADMIN_KEY = process.env.ADMIN_API_KEY;
+export const ADDRESS = 'House 12, Road 5, Dhanmondi, Dhaka';
 
 const unique = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 

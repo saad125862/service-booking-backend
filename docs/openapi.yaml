@@ -27,6 +27,7 @@ tags:
   - name: Users
   - name: Services
   - name: Appointments
+  - name: Notifications
   - name: AI assistant
   - name: Admin
 
@@ -264,7 +265,7 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateAppointmentRequest' }
-            example: { serviceId: 5d85757b-32b8-4270-8c16-4221f140fa06, startTime: '2026-11-20T10:00:00.000Z', notes: First visit }
+            example: { serviceId: 5d85757b-32b8-4270-8c16-4221f140fa06, startTime: '2026-11-20T04:00:00.000Z', address: 'House 12, Road 5, Dhanmondi, Dhaka', notes: First visit }
       responses:
         '201':
           description: Booked
@@ -358,6 +359,80 @@ paths:
           content:
             application/json:
               example: { success: false, error: { code: NOT_CANCELLABLE, message: 'Only pending appointments can be cancelled (this one is confirmed)' } }
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: My notifications
+      description: |
+        In-app notifications, newest first. Customers get them when a booking is requested, confirmed,
+        completed or cancelled. Admins get them for new bookings and customer cancellations.
+        `meta.unreadCount` is the total number of unread notifications (for the bell badge).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: unread, in: query, description: Only unread notifications, schema: { type: string, enum: ['true', 'false'] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: A page of notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notification' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /notifications/unread-count:
+    get:
+      tags: [Notifications]
+      summary: Number of unread notifications
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Unread count
+          content:
+            application/json:
+              example: { success: true, data: { unreadCount: 3 } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: Mark all notifications as read
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: How many were updated
+          content:
+            application/json:
+              example: { success: true, data: { updated: 3 } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /notifications/{id}/read:
+    patch:
+      tags: [Notifications]
+      summary: Mark one notification as read
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      responses:
+        '200':
+          description: The updated notification
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/Notification' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /ai/chat:
     post:
@@ -508,6 +583,7 @@ components:
         email: { type: string, format: email, example: demo@example.com }
         phone: { type: string, nullable: true, example: null }
         role: { type: string, enum: [user, admin], example: user }
+        address: { type: string, nullable: true, description: Default service address used to prefill bookings }
         createdAt: { type: string, format: date-time }
     RegisterRequest:
       type: object
@@ -527,6 +603,7 @@ components:
       properties:
         name: { type: string, minLength: 2, maxLength: 100 }
         phone: { type: string, nullable: true, description: 'Digits, spaces, +, (), -; empty string or null clears it' }
+        address: { type: string, nullable: true, minLength: 5, maxLength: 300, description: 'Default service address; empty string or null clears it' }
     AuthResponse:
       type: object
       properties:
@@ -548,6 +625,16 @@ components:
         category: { type: string, example: Wellness }
         isFeatured: { type: boolean }
         bookingsCount: { type: integer, description: Times this service has been booked }
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, example: booking_confirmed, description: 'booking_created, booking_confirmed, booking_completed, booking_cancelled, booking_new (admins)' }
+        title: { type: string, example: Booking confirmed }
+        body: { type: string, example: 'Good news! Your Swedish Massage on Tue, Nov 17, 2026, 10:00 AM is confirmed.' }
+        data: { type: object, nullable: true, properties: { appointmentId: { type: string, format: uuid } } }
+        isRead: { type: boolean }
+        createdAt: { type: string, format: date-time }
     PageMeta:
       type: object
       properties:
@@ -555,6 +642,7 @@ components:
         limit: { type: integer, example: 20 }
         total: { type: integer, example: 14 }
         totalPages: { type: integer, example: 1 }
+        unreadCount: { type: integer, description: 'Only on /notifications', example: 2 }
     Slot:
       type: object
       properties:
@@ -577,10 +665,11 @@ components:
       enum: [pending, confirmed, cancelled, completed]
     CreateAppointmentRequest:
       type: object
-      required: [serviceId, startTime]
+      required: [serviceId, startTime, address]
       properties:
         serviceId: { type: string, format: uuid }
         startTime: { type: string, format: date-time }
+        address: { type: string, minLength: 5, maxLength: 300, description: Where the service takes place }
         notes: { type: string, maxLength: 500 }
     Appointment:
       type: object
@@ -590,7 +679,8 @@ components:
         startTime: { type: string, format: date-time }
         endTime: { type: string, format: date-time }
         startLabel: { type: string, example: 'Fri, Nov 20, 2026, 10:00 AM' }
-        timeZone: { type: string, example: UTC }
+        timeZone: { type: string, example: Asia/Dhaka }
+        address: { type: string, nullable: true, description: Where the service takes place (null only for bookings made before addresses existed) }
         notes: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
         service:

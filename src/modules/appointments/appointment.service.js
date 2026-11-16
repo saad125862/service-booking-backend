@@ -4,6 +4,7 @@ import { APPOINTMENT_STATUS as STATUS, BOOKING } from '../../config/constants.js
 import { ApiError } from '../../utils/ApiError.js';
 import { formatDateTime, localDateString, zonedToUtcMs } from '../../utils/time.js';
 import { bookableDateRange, generateSlots } from './slots.js';
+import { notify, notifyAdmins } from '../notifications/notification.service.js';
 
 const ACTIVE = [STATUS.PENDING, STATUS.CONFIRMED];
 const withService = { service: true };
@@ -15,6 +16,7 @@ export const toAppointment = (a) => ({
   endTime: a.endTime,
   startLabel: formatDateTime(a.startTime.getTime(), env.BUSINESS_TZ),
   timeZone: env.BUSINESS_TZ,
+  address: a.address,
   notes: a.notes,
   createdAt: a.createdAt,
   service: {
@@ -71,7 +73,7 @@ export async function getAvailability(serviceId, date) {
   };
 }
 
-export async function createAppointment(userId, { serviceId, startTime, notes }) {
+export async function createAppointment(userId, { serviceId, startTime, address, notes }) {
   const tz = env.BUSINESS_TZ;
   const service = await getActiveService(serviceId);
   const startMs = new Date(startTime).getTime();
@@ -108,11 +110,14 @@ export async function createAppointment(userId, { serviceId, startTime, notes })
         serviceId,
         startTime: new Date(slot.start),
         endTime: new Date(slot.end),
+        address,
         notes: notes ?? null,
       },
       include: withService,
     });
-    return toAppointment(created);
+    const appointment = toAppointment(created);
+    await announceNewBooking(userId, appointment);
+    return appointment;
   } catch (err) {
     // The database's exclusion constraint caught a conflicting booking (e.g. a race between requests).
     const violation = exclusionViolation(err);
@@ -124,6 +129,43 @@ export async function createAppointment(userId, { serviceId, startTime, notes })
     }
     throw err;
   }
+}
+
+async function announceNewBooking(userId, appointment) {
+  const customer = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+  const data = { appointmentId: appointment.id };
+  const label = `${appointment.service.name} on ${appointment.startLabel}`;
+  await notify(userId, {
+    type: 'booking_created',
+    title: 'Booking requested',
+    body: `Your ${label} is pending confirmation.`,
+    data,
+  });
+  await notifyAdmins({
+    type: 'booking_new',
+    title: 'New booking',
+    body: `${customer?.name ?? 'A customer'} booked ${label}.`,
+    data,
+  });
+}
+
+// What the customer is told when an admin (or the system) changes a booking's status.
+const STATUS_MESSAGES = {
+  [STATUS.CONFIRMED]: ['booking_confirmed', 'Booking confirmed', (l) => `Good news! Your ${l} is confirmed.`],
+  [STATUS.COMPLETED]: ['booking_completed', 'Booking completed', (l) => `Your ${l} is complete. Thank you for choosing Seba!`],
+  [STATUS.CANCELLED]: ['booking_cancelled', 'Booking cancelled', (l) => `Your ${l} was cancelled by the provider.`],
+};
+
+export async function announceStatusChange(appointment, newStatus) {
+  const entry = STATUS_MESSAGES[newStatus];
+  if (!entry) return;
+  const [type, title, body] = entry;
+  await notify(appointment.userId, {
+    type,
+    title,
+    body: body(`${appointment.service.name} on ${formatDateTime(appointment.startTime.getTime(), env.BUSINESS_TZ)}`),
+    data: { appointmentId: appointment.id },
+  });
 }
 
 export async function listAppointments(userId, { scope, status, page, limit }) {
@@ -169,7 +211,15 @@ export async function cancelAppointment(userId, id) {
       `Only pending appointments can be cancelled (this one is ${existing.status})`,
     );
   }
-  return getAppointment(userId, id);
+  const cancelled = await getAppointment(userId, id);
+  const customer = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+  await notifyAdmins({
+    type: 'booking_cancelled',
+    title: 'Booking cancelled',
+    body: `${customer?.name ?? 'A customer'} cancelled ${cancelled.service.name} on ${cancelled.startLabel}.`,
+    data: { appointmentId: id },
+  });
+  return cancelled;
 }
 
 // Which current statuses may move to each target status.
@@ -190,14 +240,21 @@ export async function adminSetStatus(id, newStatus) {
   if (count === 0) {
     throw ApiError.conflict('INVALID_TRANSITION', `Cannot change status from ${row.status} to ${newStatus}`);
   }
+  await announceStatusChange(row, newStatus);
   return toAppointment(row);
 }
 
 // Confirmed bookings whose time has passed become completed.
 export async function completePastAppointments() {
-  const { count } = await prisma.appointment.updateMany({
+  const due = await prisma.appointment.findMany({
     where: { status: STATUS.CONFIRMED, endTime: { lt: new Date() } },
+    include: withService,
+  });
+  if (due.length === 0) return 0;
+  const { count } = await prisma.appointment.updateMany({
+    where: { id: { in: due.map((a) => a.id) }, status: STATUS.CONFIRMED },
     data: { status: STATUS.COMPLETED },
   });
+  for (const appointment of due) await announceStatusChange(appointment, STATUS.COMPLETED);
   return count;
 }

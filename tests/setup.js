@@ -7,7 +7,9 @@ process.env.GEMINI_API_KEY = ''; // tests never call Gemini
 
 afterAll(async () => {
   const { prisma } = await import('../src/db/prisma.js');
-  // Appointments are removed by the ON DELETE CASCADE on users.
+  // Notifications sent to the demo admin about test bookings (their text starts with the test user's name).
+  await prisma.notification.deleteMany({ where: { body: { startsWith: 'Test ' } } });
+  // Appointments and the test users' own notifications are removed by ON DELETE CASCADE.
   await prisma.user.deleteMany({ where: { email: { startsWith: 'test-' } } });
   await prisma.$disconnect();
 });

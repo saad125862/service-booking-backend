@@ -71,6 +71,18 @@ describe('auth and profile', () => {
     expect((await api().patch('/api/v1/users/me').set(auth(token)).send({})).status).toBe(400);
   });
 
+  it('saves, returns and clears a default address', async () => {
+    const { token } = await registerUser('addr');
+    const set = await api().patch('/api/v1/users/me').set(auth(token)).send({ address: 'Flat 4B, Gulshan Avenue, Dhaka' });
+    expect(set.status).toBe(200);
+    expect(set.body.data.address).toBe('Flat 4B, Gulshan Avenue, Dhaka');
+    expect((await api().get('/api/v1/users/me').set(auth(token))).body.data.address).toBe('Flat 4B, Gulshan Avenue, Dhaka');
+
+    expect((await api().patch('/api/v1/users/me').set(auth(token)).send({ address: 'x' })).status).toBe(400);
+    const cleared = await api().patch('/api/v1/users/me').set(auth(token)).send({ address: '' });
+    expect(cleared.body.data.address).toBeNull();
+  });
+
   it('changes the password only with the correct current password', async () => {
     const { token, email } = await registerUser('pw');
     const bad = await api().patch('/api/v1/users/me/password').set(auth(token)).send({ currentPassword: 'nope', newPassword: 'NewPass123' });

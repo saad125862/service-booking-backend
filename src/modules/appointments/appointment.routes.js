@@ -10,6 +10,7 @@ const idParams = z.object({ id: z.uuid() });
 const createBody = z.object({
   serviceId: z.uuid(),
   startTime: z.iso.datetime({ offset: true, message: 'startTime must be an ISO 8601 date-time' }),
+  address: z.string().trim().min(5, 'Enter the full service address').max(300, 'Address must be at most 300 characters'),
   notes: z.string().trim().max(500).optional(),
 });
 

@@ -35,9 +35,12 @@ model User {
   email        String        @unique
   passwordHash String        @map("password_hash")
   phone        String?       @db.VarChar(30)
+  // Default service address, used to prefill bookings.
+  address      String?       @db.VarChar(300)
   createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  appointments Appointment[]
+  appointments  Appointment[]
+  notifications Notification[]
 
   @@map("users")
 }
@@ -66,6 +69,8 @@ model Appointment {
   startTime DateTime          @map("start_time") @db.Timestamptz(6)
   endTime   DateTime          @map("end_time") @db.Timestamptz(6)
   status    AppointmentStatus @default(pending)
+  // Where the service takes place. Required for new bookings; null only for older rows.
+  address   String?           @db.VarChar(300)
   notes     String?           @db.VarChar(500)
   createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -76,4 +81,22 @@ model Appointment {
   @@index([userId, startTime(sort: Desc)])
   @@index([status, endTime])
   @@map("appointments")
+}
+
+// In-app notifications (booking created, confirmed, completed, cancelled; new bookings for admins).
+model Notification {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  type      String    @db.VarChar(40)
+  title     String    @db.VarChar(120)
+  body      String    @db.VarChar(500)
+  data      Json?
+  readAt    DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, readAt])
+  @@map("notifications")
 }

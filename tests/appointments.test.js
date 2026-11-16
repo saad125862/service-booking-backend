@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { ADMIN_KEY, api, at, auth, dateIn, findService, registerUser } from './helpers.js';
+import { ADDRESS, ADMIN_KEY, api, at, auth, dateIn, findService, registerUser } from './helpers.js';
 
 const book = (token, serviceId, startTime, notes) =>
-  api().post('/api/v1/appointments').set(auth(token)).send({ serviceId, startTime, notes });
+  api().post('/api/v1/appointments').set(auth(token)).send({ serviceId, startTime, address: ADDRESS, notes });
 
 describe('availability and booking', () => {
   let massage, facial, a, b, c;
@@ -52,6 +52,28 @@ describe('availability and booking', () => {
     const res = await book(a.token, facial.id, at(day, '10:30'));
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('USER_OVERLAP');
+  });
+
+  it('requires a service address and returns it on the booking', async () => {
+    const missing = await api()
+      .post('/api/v1/appointments')
+      .set(auth(c.token))
+      .send({ serviceId: massage.id, startTime: at(day, '15:00') });
+    expect(missing.status).toBe(400);
+    expect(missing.body.error.details.map((d) => d.field)).toContain('address');
+
+    const tooShort = await api()
+      .post('/api/v1/appointments')
+      .set(auth(c.token))
+      .send({ serviceId: massage.id, startTime: at(day, '15:00'), address: 'abc' });
+    expect(tooShort.status).toBe(400);
+
+    const created = await book(c.token, massage.id, at(day, '15:00'));
+    expect(created.status).toBe(201);
+    expect(created.body.data.address).toBe(ADDRESS);
+    const fetched = await api().get(`/api/v1/appointments/${created.body.data.id}`).set(auth(c.token));
+    expect(fetched.body.data.address).toBe(ADDRESS);
+    await api().patch(`/api/v1/appointments/${created.body.data.id}/cancel`).set(auth(c.token));
   });
 
   it('rejects invalid slots and inputs', async () => {
