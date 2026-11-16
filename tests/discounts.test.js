@@ -109,27 +109,34 @@ describe('discount requests: admin approval, one order only', () => {
     expect((await book(alice, massage, '16:00')).body.data.discountAmount).toBe(0);
   });
 
-  it('a general fixed discount applies to any service; an expired one does not', async () => {
-    const general = await createDiscountRequest(bob.id, { serviceId: null, message: 'Any discount please', language: 'banglish' });
-    const approved = await decide(general.request.id, 'approve', { type: 'fixed', value: 100 });
-    expect(approved.body.data.service).toBeNull();
+  it('a request must name one service', async () => {
+    await expect(createDiscountRequest(bob.id, { serviceId: null, message: 'Any discount please', language: 'en' })).rejects.toMatchObject({
+      statusCode: 400,
+    });
+  });
+
+  it('an expired discount stops applying; a new approved one works for exactly one order', async () => {
+    const first = await createDiscountRequest(bob.id, { serviceId: facial.id, message: 'Any discount please', language: 'banglish' });
+    const approved = await decide(first.request.id, 'approve', { type: 'fixed', value: 100 });
+    expect(approved.body.data.service.name).toBe('Classic Facial');
     expect(approved.body.data.language).toBe('banglish');
     expect(approved.body.data.reply).toMatch(/discount|Discount/); // Banglish template (Latin letters)
-    expect(approved.body.data.reply).not.toMatch(/[ঀ-৲৴-৿]/); // Latin letters only (the ৳ sign is allowed)
+    expect(approved.body.data.reply).not.toMatch(/[\u0980-\u09F2\u09F4-\u09FF]/); // Latin letters only (the ৳ sign is allowed)
 
     // Expire it in the database: it must stop applying and read as expired.
-    await prisma.discountRequest.update({ where: { id: general.request.id }, data: { expiresAt: new Date(Date.now() - 60_000) } });
+    await prisma.discountRequest.update({ where: { id: first.request.id }, data: { expiresAt: new Date(Date.now() - 60_000) } });
     const bobList = await mine(bob);
-    expect(bobList.find((r) => r.id === general.request.id).status).toBe('expired');
+    expect(bobList.find((r) => r.id === first.request.id).status).toBe('expired');
     const expired = await book(bob, facial, '09:00');
     expect(expired.body.data).toMatchObject({ discountAmount: 0, price: 1800 });
 
-    // A fresh general request that is still valid takes ৳100 off any service.
-    const fresh = await createDiscountRequest(bob.id, { serviceId: null, message: 'One more try', language: 'bn' });
+    // A fresh request that is still valid takes ৳100 off, once.
+    const fresh = await createDiscountRequest(bob.id, { serviceId: facial.id, message: 'One more try', language: 'bn' });
     const ok = await decide(fresh.request.id, 'approve', { type: 'fixed', value: 100 });
-    expect(ok.body.data.reply).toMatch(/[ঀ-৲৴-৿]/); // Bangla template (Bengali letters)
+    expect(ok.body.data.reply).toMatch(/[\u0980-\u09F2\u09F4-\u09FF]/); // Bangla template (Bengali letters)
     const applied = await book(bob, facial, '11:00');
     expect(applied.body.data).toMatchObject({ originalPrice: 1800, discountAmount: 100, price: 1700 });
+    expect((await book(bob, facial, '12:00')).body.data.discountAmount).toBe(0); // next order: current price
   });
 
   it('a declined request answers the customer politely and gives no discount', async () => {

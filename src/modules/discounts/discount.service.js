@@ -54,8 +54,10 @@ export function discountAmountFor(request, price) {
 
 /** Called by the AI assistant. One open request per customer and service: asking again returns it. */
 export async function createDiscountRequest(userId, { serviceId, message, language }) {
+  // Every request is for one specific service: the assistant asks which one before filing.
+  if (!serviceId) throw ApiError.badRequest('Choose the service the discount is for');
   const existing = await prisma.discountRequest.findFirst({
-    where: { userId, status: 'pending', serviceId: serviceId ?? null },
+    where: { userId, status: 'pending', serviceId },
     include,
   });
   if (existing) return { request: existing, created: false };
@@ -63,7 +65,7 @@ export async function createDiscountRequest(userId, { serviceId, message, langua
   const request = await prisma.discountRequest.create({
     data: {
       userId,
-      serviceId: serviceId ?? null,
+      serviceId,
       message: clip(message, 500),
       language: ['en', 'bn', 'banglish'].includes(language) ? language : 'en',
     },

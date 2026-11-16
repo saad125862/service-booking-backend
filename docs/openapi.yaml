@@ -571,6 +571,7 @@ paths:
       description: |
         Customers ask for a discount through the AI assistant (`POST /ai/chat`). The assistant never grants one: it files a request,
         tells the customer an admin is reviewing it, and an admin approves (percent or fixed BDT amount) or declines.
+        The assistant first asks **which exact service** the discount is for and files a request only once one specific service is named (never a guess).
         The decision is written back to the customer in their language in `reply`.
 
         An approved discount belongs to **that customer only** and is used by **one order**: it is applied automatically when they
@@ -1334,7 +1335,7 @@ components:
         discountRequest:
           type: object
           nullable: true
-          description: Set when the customer asked for a discount. The assistant never grants it; an admin decides and the answer arrives later (see GET /discount-requests and notifications).
+          description: Set when the customer asked for a discount for one specific service. The assistant never grants it; an admin decides and the answer arrives later (see GET /discount-requests and notifications). When the service is unclear the assistant asks which one instead and this stays null.
           properties:
             id: { type: string, format: uuid }
             status: { type: string, example: pending }
