@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import { query } from '../../db/pool.js';
+import { prisma } from '../../db/prisma.js';
 import { BCRYPT_COST } from '../../config/constants.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { signToken } from '../../middleware/auth.js';
@@ -11,21 +11,18 @@ const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', BCRYPT_COST);
 export async function register({ name, email, password }) {
   const passwordHash = await bcrypt.hash(password, BCRYPT_COST);
   try {
-    const { rows } = await query(
-      `INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING *`,
-      [name, email, passwordHash],
-    );
-    return { user: toUser(rows[0]), token: signToken(rows[0].id) };
+    const user = await prisma.user.create({ data: { name, email, passwordHash } });
+    return { user: toUser(user), token: signToken(user.id) };
   } catch (err) {
-    if (err.code === '23505') throw ApiError.conflict('EMAIL_TAKEN', 'An account with this email already exists');
+    // P2002 = unique constraint violation
+    if (err.code === 'P2002') throw ApiError.conflict('EMAIL_TAKEN', 'An account with this email already exists');
     throw err;
   }
 }
 
 export async function login({ email, password }) {
-  const { rows } = await query(`SELECT * FROM users WHERE email = $1`, [email]);
-  const user = rows[0];
-  const valid = await bcrypt.compare(password, user?.password_hash ?? DUMMY_HASH);
+  const user = await prisma.user.findUnique({ where: { email } });
+  const valid = await bcrypt.compare(password, user?.passwordHash ?? DUMMY_HASH);
   if (!user || !valid) {
     throw new ApiError(401, 'INVALID_CREDENTIALS', 'Incorrect email or password');
   }

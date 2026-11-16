@@ -1,10 +1,11 @@
 import bcrypt from 'bcryptjs';
-import { pool } from '../pool.js';
-import { BCRYPT_COST } from '../../config/constants.js';
+import { prisma } from '../src/db/prisma.js';
+import { BCRYPT_COST } from '../src/config/constants.js';
 
-// Placeholder photos (seeded, stable per service). Replace image_url values with real photos any time.
+// Placeholder photos (seeded, stable per service). Replace imageUrl values with real photos any time.
 const img = (slug) => `https://picsum.photos/seed/${slug}/800/600`;
 
+// [name, category, price, durationMinutes, isFeatured, description]
 const SERVICES = [
   ['Swedish Massage', 'Wellness', 60, 60, true, 'A relaxing full-body massage using long, flowing strokes to ease tension and improve circulation.'],
   ['Deep Tissue Massage', 'Wellness', 85, 90, false, 'Firm-pressure massage targeting chronic muscle tightness, ideal for athletes and desk workers.'],
@@ -25,43 +26,28 @@ const SERVICES = [
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
 async function main() {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    for (const [name, category, price, duration, featured, description] of SERVICES) {
-      await client.query(
-        `INSERT INTO services (name, description, price, duration_minutes, image_url, category, is_featured)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (name) DO UPDATE SET
-           description = EXCLUDED.description, price = EXCLUDED.price,
-           duration_minutes = EXCLUDED.duration_minutes, image_url = EXCLUDED.image_url,
-           category = EXCLUDED.category, is_featured = EXCLUDED.is_featured`,
-        [name, description, price, duration, img(slug(name)), category, featured],
-      );
-    }
-
-    // Demo account for reviewers (documented in the README).
-    const hash = await bcrypt.hash('Demo@1234', BCRYPT_COST);
-    await client.query(
-      `INSERT INTO users (name, email, password_hash)
-       VALUES ('Demo User', 'demo@example.com', $1)
-       ON CONFLICT (email) DO NOTHING`,
-      [hash],
-    );
-
-    await client.query('COMMIT');
-    console.log(`Seeded ${SERVICES.length} services and the demo user.`);
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-    await pool.end();
+  for (const [name, category, price, durationMinutes, isFeatured, description] of SERVICES) {
+    const data = { description, price, durationMinutes, imageUrl: img(slug(name)), category, isFeatured };
+    await prisma.service.upsert({ where: { name }, update: data, create: { name, ...data } });
   }
+
+  // Demo account for reviewers (documented in the README).
+  await prisma.user.upsert({
+    where: { email: 'demo@example.com' },
+    update: {},
+    create: {
+      name: 'Demo User',
+      email: 'demo@example.com',
+      passwordHash: await bcrypt.hash('Demo@1234', BCRYPT_COST),
+    },
+  });
+
+  console.log(`Seeded ${SERVICES.length} services and the demo user.`);
 }
 
-main().catch((err) => {
-  console.error('Seed failed:', err);
-  process.exit(1);
-});
+main()
+  .catch((err) => {
+    console.error('Seed failed:', err);
+    process.exitCode = 1;
+  })
+  .finally(() => prisma.$disconnect());

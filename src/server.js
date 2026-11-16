@@ -1,5 +1,5 @@
 import { env } from './config/env.js';
-import { pool } from './db/pool.js';
+import { prisma } from './db/prisma.js';
 import { createApp } from './app.js';
 import { startCompletionJob } from './jobs/completeAppointments.js';
 
@@ -14,7 +14,7 @@ startCompletionJob();
 const shutdown = (signal) => {
   console.log(`${signal} received, shutting down`);
   server.close(async () => {
-    await pool.end();
+    await prisma.$disconnect();
     process.exit(0);
   });
   setTimeout(() => process.exit(1), 10_000).unref();

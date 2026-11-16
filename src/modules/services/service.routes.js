@@ -1,32 +1,34 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { query } from '../../db/pool.js';
+import { prisma } from '../../db/prisma.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { ok } from '../../utils/response.js';
 import { validate } from '../../middleware/validate.js';
 
 const router = Router();
 
-const toService = (r) => ({
-  id: r.id,
-  name: r.name,
-  description: r.description,
-  price: Number(r.price),
-  durationMinutes: r.duration_minutes,
-  imageUrl: r.image_url,
-  category: r.category,
-  isFeatured: r.is_featured,
-  bookingsCount: Number(r.bookings_count ?? 0),
+const toService = (s) => ({
+  id: s.id,
+  name: s.name,
+  description: s.description,
+  price: Number(s.price),
+  durationMinutes: s.durationMinutes,
+  imageUrl: s.imageUrl,
+  category: s.category,
+  isFeatured: s.isFeatured,
+  bookingsCount: s._count?.appointments ?? 0, // how many times the service has been booked
 });
 
-// Each value maps to a fixed SQL fragment, so user input never reaches ORDER BY.
+const withCount = { _count: { select: { appointments: true } } };
+
+// Each key maps to a fixed Prisma orderBy, so user input never builds the sort.
 const SORTS = {
-  featured: 's.is_featured DESC, bookings_count DESC, s.name ASC',
-  popular: 'bookings_count DESC, s.is_featured DESC, s.name ASC',
-  price_asc: 's.price ASC, s.name ASC',
-  price_desc: 's.price DESC, s.name ASC',
-  name: 's.name ASC',
-  newest: 's.created_at DESC, s.name ASC',
+  featured: [{ isFeatured: 'desc' }, { appointments: { _count: 'desc' } }, { name: 'asc' }],
+  popular: [{ appointments: { _count: 'desc' } }, { isFeatured: 'desc' }, { name: 'asc' }],
+  price_asc: [{ price: 'asc' }, { name: 'asc' }],
+  price_desc: [{ price: 'desc' }, { name: 'asc' }],
+  name: [{ name: 'asc' }],
+  newest: [{ createdAt: 'desc' }, { name: 'asc' }],
 };
 
 const listQuery = z
@@ -45,59 +47,59 @@ const listQuery = z
     path: ['minPrice'],
   });
 
-const escapeLike = (s) => s.replace(/[\\%_]/g, '\\$&');
-
-const BOOKINGS_COUNT = `(SELECT count(*) FROM appointments a
-                          WHERE a.service_id = s.id AND a.status <> 'cancelled') AS bookings_count`;
-
 router.get('/', validate({ query: listQuery }), async (req, res) => {
   const { search, category, featured, minPrice, maxPrice, sort, page, limit } = req.valid.query;
+  // Prisma passes "contains"/insensitive "equals" to LIKE/ILIKE without escaping wildcards,
+  // so a literal % or _ typed by a user must be escaped here.
+  const escapeLike = (s) => s.replace(/[\\%_]/g, '\\$&');
+  const insensitive = (v) => ({ contains: escapeLike(v), mode: 'insensitive' });
 
-  const where = ['s.is_active'];
-  const params = [];
-  const add = (sql, value) => {
-    params.push(value);
-    where.push(sql.replaceAll('?', `$${params.length}`));
+  const where = {
+    isActive: true,
+    ...(search && {
+      OR: [{ name: insensitive(search) }, { description: insensitive(search) }, { category: insensitive(search) }],
+    }),
+    ...(category && { category: { equals: escapeLike(category), mode: 'insensitive' } }),
+    ...(featured && { isFeatured: featured === 'true' }),
+    ...((minPrice !== undefined || maxPrice !== undefined) && {
+      price: {
+        ...(minPrice !== undefined && { gte: minPrice }),
+        ...(maxPrice !== undefined && { lte: maxPrice }),
+      },
+    }),
   };
 
-  if (search) add(`(s.name ILIKE ? OR s.description ILIKE ? OR s.category ILIKE ?)`, `%${escapeLike(search)}%`);
-  if (category) add(`s.category ILIKE ?`, escapeLike(category));
-  if (featured) add(`s.is_featured = ?`, featured === 'true');
-  if (minPrice !== undefined) add(`s.price >= ?`, minPrice);
-  if (maxPrice !== undefined) add(`s.price <= ?`, maxPrice);
-
-  const whereSql = where.join(' AND ');
-  const total = Number(
-    (await query(`SELECT count(*) FROM services s WHERE ${whereSql}`, params)).rows[0].count,
-  );
-
-  const { rows } = await query(
-    `SELECT s.*, ${BOOKINGS_COUNT}
-       FROM services s
-      WHERE ${whereSql}
-      ORDER BY ${SORTS[sort]}
-      LIMIT ${limit} OFFSET ${(page - 1) * limit}`,
-    params,
-  );
+  const [total, rows] = await Promise.all([
+    prisma.service.count({ where }),
+    prisma.service.findMany({
+      where,
+      orderBy: SORTS[sort],
+      skip: (page - 1) * limit,
+      take: limit,
+      include: withCount,
+    }),
+  ]);
 
   ok(res, rows.map(toService), { page, limit, total, totalPages: Math.ceil(total / limit) });
 });
 
 router.get('/categories', async (_req, res) => {
-  const { rows } = await query(
-    `SELECT category AS name, count(*)::int AS count
-       FROM services WHERE is_active GROUP BY category ORDER BY category`,
-  );
-  ok(res, rows);
+  const groups = await prisma.service.groupBy({
+    by: ['category'],
+    where: { isActive: true },
+    _count: { _all: true },
+    orderBy: { category: 'asc' },
+  });
+  ok(res, groups.map((g) => ({ name: g.category, count: g._count._all })));
 });
 
 router.get('/:id', validate({ params: z.object({ id: z.uuid() }) }), async (req, res) => {
-  const { rows } = await query(
-    `SELECT s.*, ${BOOKINGS_COUNT} FROM services s WHERE s.id = $1 AND s.is_active`,
-    [req.valid.params.id],
-  );
-  if (!rows[0]) throw ApiError.notFound('Service not found');
-  ok(res, toService(rows[0]));
+  const service = await prisma.service.findFirst({
+    where: { id: req.valid.params.id, isActive: true },
+    include: withCount,
+  });
+  if (!service) throw ApiError.notFound('Service not found');
+  ok(res, toService(service));
 });
 
 export default router;

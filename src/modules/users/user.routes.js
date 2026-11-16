@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { query } from '../../db/pool.js';
+import { prisma } from '../../db/prisma.js';
 import { BCRYPT_COST } from '../../config/constants.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { ok } from '../../utils/response.js';
@@ -36,9 +36,9 @@ const changePasswordBody = z.object({
 });
 
 async function findUser(id) {
-  const { rows } = await query('SELECT * FROM users WHERE id = $1', [id]);
-  if (!rows[0]) throw ApiError.unauthorized('Account no longer exists');
-  return rows[0];
+  const user = await prisma.user.findUnique({ where: { id } });
+  if (!user) throw ApiError.unauthorized('Account no longer exists');
+  return user;
 }
 
 router.get('/me', async (req, res) => {
@@ -47,27 +47,29 @@ router.get('/me', async (req, res) => {
 
 router.patch('/me', validate({ body: updateProfileBody }), async (req, res) => {
   const { name, phone } = req.valid.body;
-  const { rows } = await query(
-    `UPDATE users
-        SET name  = COALESCE($2, name),
-            phone = CASE WHEN $3::boolean THEN NULLIF($4, '') ELSE phone END
-      WHERE id = $1
-      RETURNING *`,
-    [req.user.id, name ?? null, phone !== undefined, phone ?? null],
-  );
-  if (!rows[0]) throw ApiError.unauthorized('Account no longer exists');
-  ok(res, toUser(rows[0]));
+  const data = {};
+  if (name !== undefined) data.name = name;
+  if (phone !== undefined) data.phone = phone || null;
+
+  try {
+    ok(res, toUser(await prisma.user.update({ where: { id: req.user.id }, data })));
+  } catch (err) {
+    if (err.code === 'P2025') throw ApiError.unauthorized('Account no longer exists'); // record not found
+    throw err;
+  }
 });
 
 router.patch('/me/password', authLimiter, validate({ body: changePasswordBody }), async (req, res) => {
   const { currentPassword, newPassword } = req.valid.body;
   const user = await findUser(req.user.id);
 
-  if (!(await bcrypt.compare(currentPassword, user.password_hash))) {
+  if (!(await bcrypt.compare(currentPassword, user.passwordHash))) {
     throw new ApiError(400, 'INVALID_CURRENT_PASSWORD', 'Current password is incorrect');
   }
-  const hash = await bcrypt.hash(newPassword, BCRYPT_COST);
-  await query('UPDATE users SET password_hash = $2 WHERE id = $1', [user.id, hash]);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordHash: await bcrypt.hash(newPassword, BCRYPT_COST) },
+  });
   ok(res, { message: 'Password updated' });
 });
 

@@ -30,7 +30,7 @@ services:
     volumes:
       - ./src:/app/src
     # Local dev: apply migrations, seed demo data, then run with auto-reload.
-    command: sh -c "npm run migrate && npm run seed && npm run dev"
+    command: sh -c "npx prisma migrate deploy && npm run seed && npm run dev"
 
 volumes:
   pgdata:

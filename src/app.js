@@ -4,7 +4,7 @@ import cors from 'cors';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import { env } from './config/env.js';
-import { query } from './db/pool.js';
+import { prisma } from './db/prisma.js';
 import { ok } from './utils/response.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import authRoutes from './modules/auth/auth.routes.js';
@@ -42,7 +42,7 @@ export function createApp() {
   const api = express.Router();
 
   api.get('/health', async (_req, res) => {
-    await query('SELECT 1');
+    await prisma.$queryRaw`SELECT 1`;
     ok(res, { status: 'ok', uptime: Math.round(process.uptime()) });
   });
 

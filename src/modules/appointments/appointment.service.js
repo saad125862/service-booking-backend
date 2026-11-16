@@ -1,49 +1,49 @@
-import { pool, query } from '../../db/pool.js';
+import { prisma, exclusionViolation } from '../../db/prisma.js';
 import { env } from '../../config/env.js';
 import { APPOINTMENT_STATUS as STATUS, BOOKING } from '../../config/constants.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { formatDateTime, localDateString, zonedToUtcMs } from '../../utils/time.js';
 import { bookableDateRange, generateSlots } from './slots.js';
 
-const SELECT = `
-  SELECT a.*, s.name AS service_name, s.price AS service_price, s.duration_minutes AS service_duration,
-         s.image_url AS service_image, s.category AS service_category
-    FROM appointments a
-    JOIN services s ON s.id = a.service_id`;
+const ACTIVE = [STATUS.PENDING, STATUS.CONFIRMED];
+const withService = { service: true };
 
-export const toAppointment = (r) => ({
-  id: r.id,
-  status: r.status,
-  startTime: r.start_time,
-  endTime: r.end_time,
-  startLabel: formatDateTime(new Date(r.start_time).getTime(), env.BUSINESS_TZ),
+export const toAppointment = (a) => ({
+  id: a.id,
+  status: a.status,
+  startTime: a.startTime,
+  endTime: a.endTime,
+  startLabel: formatDateTime(a.startTime.getTime(), env.BUSINESS_TZ),
   timeZone: env.BUSINESS_TZ,
-  notes: r.notes,
-  createdAt: r.created_at,
+  notes: a.notes,
+  createdAt: a.createdAt,
   service: {
-    id: r.service_id,
-    name: r.service_name,
-    price: Number(r.service_price),
-    durationMinutes: r.service_duration,
-    imageUrl: r.service_image,
-    category: r.service_category,
+    id: a.service.id,
+    name: a.service.name,
+    price: Number(a.service.price),
+    durationMinutes: a.service.durationMinutes,
+    imageUrl: a.service.imageUrl,
+    category: a.service.category,
   },
 });
 
 async function getActiveService(serviceId) {
-  const { rows } = await query(`SELECT * FROM services WHERE id = $1 AND is_active`, [serviceId]);
-  if (!rows[0]) throw ApiError.notFound('Service not found');
-  return rows[0];
+  const service = await prisma.service.findFirst({ where: { id: serviceId, isActive: true } });
+  if (!service) throw ApiError.notFound('Service not found');
+  return service;
 }
 
 async function bookedRanges(serviceId, dayStartMs, dayEndMs) {
-  const { rows } = await query(
-    `SELECT start_time, end_time FROM appointments
-      WHERE service_id = $1 AND status IN ('pending', 'confirmed')
-        AND start_time < $3 AND end_time > $2`,
-    [serviceId, new Date(dayStartMs), new Date(dayEndMs)],
-  );
-  return rows.map((r) => ({ start: r.start_time.getTime(), end: r.end_time.getTime() }));
+  const rows = await prisma.appointment.findMany({
+    where: {
+      serviceId,
+      status: { in: ACTIVE },
+      startTime: { lt: new Date(dayEndMs) },
+      endTime: { gt: new Date(dayStartMs) },
+    },
+    select: { startTime: true, endTime: true },
+  });
+  return rows.map((r) => ({ start: r.startTime.getTime(), end: r.endTime.getTime() }));
 }
 
 export async function getAvailability(serviceId, date) {
@@ -66,8 +66,8 @@ export async function getAvailability(serviceId, date) {
     date,
     timeZone: tz,
     serviceId,
-    durationMinutes: service.duration_minutes,
-    slots: generateSlots({ date, durationMinutes: service.duration_minutes, tz, booked, nowMs }),
+    durationMinutes: service.durationMinutes,
+    slots: generateSlots({ date, durationMinutes: service.durationMinutes, tz, booked, nowMs }),
   };
 }
 
@@ -87,7 +87,7 @@ export async function createAppointment(userId, { serviceId, startTime, notes })
       ? []
       : generateSlots({
           date,
-          durationMinutes: service.duration_minutes,
+          durationMinutes: service.durationMinutes,
           tz,
           booked: await bookedRanges(serviceId, dayStart, dayEnd),
           nowMs,
@@ -102,18 +102,24 @@ export async function createAppointment(userId, { serviceId, startTime, notes })
   }
 
   try {
-    const { rows } = await query(
-      `INSERT INTO appointments (user_id, service_id, start_time, end_time, notes)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [userId, serviceId, new Date(slot.start), new Date(slot.end), notes ?? null],
-    );
-    return getAppointment(userId, rows[0].id);
+    const created = await prisma.appointment.create({
+      data: {
+        userId,
+        serviceId,
+        startTime: new Date(slot.start),
+        endTime: new Date(slot.end),
+        notes: notes ?? null,
+      },
+      include: withService,
+    });
+    return toAppointment(created);
   } catch (err) {
-    // 23P01 = exclusion_violation: the database caught a conflicting booking (e.g. a race).
-    if (err.code === '23P01') {
-      if (err.constraint === 'appointments_no_user_overlap') {
-        throw ApiError.conflict('USER_OVERLAP', 'You already have a booking that overlaps this time');
-      }
+    // The database's exclusion constraint caught a conflicting booking (e.g. a race between requests).
+    const violation = exclusionViolation(err);
+    if (violation === 'user') {
+      throw ApiError.conflict('USER_OVERLAP', 'You already have a booking that overlaps this time');
+    }
+    if (violation === 'service') {
       throw ApiError.conflict('SLOT_UNAVAILABLE', 'That time slot was just taken, please pick another');
     }
     throw err;
@@ -121,44 +127,42 @@ export async function createAppointment(userId, { serviceId, startTime, notes })
 }
 
 export async function listAppointments(userId, { scope, status, page, limit }) {
-  const where = ['a.user_id = $1'];
-  const params = [userId];
-  if (status) {
-    params.push(status);
-    where.push(`a.status = $${params.length}`);
-  }
   // upcoming: still ahead and active; past: everything else (ended, cancelled, completed)
-  const upcoming = `(a.end_time > now() AND a.status IN ('pending', 'confirmed'))`;
-  if (scope === 'upcoming') where.push(upcoming);
-  if (scope === 'past') where.push(`NOT ${upcoming}`);
+  const upcoming = { endTime: { gt: new Date() }, status: { in: ACTIVE } };
+  const where = {
+    userId,
+    ...(status && { status }),
+    ...(scope === 'upcoming' && upcoming),
+    ...(scope === 'past' && { NOT: upcoming }),
+  };
 
-  const order = scope === 'upcoming' ? 'a.start_time ASC' : 'a.start_time DESC';
-  const whereSql = where.join(' AND ');
-
-  const total = Number(
-    (await query(`SELECT count(*) FROM appointments a WHERE ${whereSql}`, params)).rows[0].count,
-  );
-  const { rows } = await query(
-    `${SELECT} WHERE ${whereSql} ORDER BY ${order} LIMIT ${limit} OFFSET ${(page - 1) * limit}`,
-    params,
-  );
+  const [total, rows] = await Promise.all([
+    prisma.appointment.count({ where }),
+    prisma.appointment.findMany({
+      where,
+      orderBy: { startTime: scope === 'upcoming' ? 'asc' : 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+      include: withService,
+    }),
+  ]);
   return { items: rows.map(toAppointment), meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }
 
 // Scoped to the owner: someone else's appointment is indistinguishable from a missing one.
 export async function getAppointment(userId, id) {
-  const { rows } = await query(`${SELECT} WHERE a.id = $1 AND a.user_id = $2`, [id, userId]);
-  if (!rows[0]) throw ApiError.notFound('Appointment not found');
-  return toAppointment(rows[0]);
+  const row = await prisma.appointment.findFirst({ where: { id, userId }, include: withService });
+  if (!row) throw ApiError.notFound('Appointment not found');
+  return toAppointment(row);
 }
 
 export async function cancelAppointment(userId, id) {
   // Single atomic statement: ownership and "pending only" are enforced together.
-  const { rowCount } = await query(
-    `UPDATE appointments SET status = $3 WHERE id = $1 AND user_id = $2 AND status = $4`,
-    [id, userId, STATUS.CANCELLED, STATUS.PENDING],
-  );
-  if (rowCount === 0) {
+  const { count } = await prisma.appointment.updateMany({
+    where: { id, userId, status: STATUS.PENDING },
+    data: { status: STATUS.CANCELLED },
+  });
+  if (count === 0) {
     const existing = await getAppointment(userId, id); // throws 404 if missing / not owned
     throw ApiError.conflict(
       'NOT_CANCELLABLE',
@@ -168,37 +172,32 @@ export async function cancelAppointment(userId, id) {
   return getAppointment(userId, id);
 }
 
-const TRANSITIONS = {
-  [STATUS.PENDING]: [STATUS.CONFIRMED, STATUS.CANCELLED],
-  [STATUS.CONFIRMED]: [STATUS.COMPLETED, STATUS.CANCELLED],
+// Which current statuses may move to each target status.
+const ALLOWED_FROM = {
+  [STATUS.CONFIRMED]: [STATUS.PENDING],
+  [STATUS.COMPLETED]: [STATUS.CONFIRMED],
+  [STATUS.CANCELLED]: [STATUS.PENDING, STATUS.CONFIRMED],
 };
 
-// Operations/demo path: moves a booking forward through its lifecycle.
+// Operations/demo path: moves a booking forward through its lifecycle (atomic conditional update).
 export async function adminSetStatus(id, newStatus) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const { rows } = await client.query(`SELECT status FROM appointments WHERE id = $1 FOR UPDATE`, [id]);
-    if (!rows[0]) throw ApiError.notFound('Appointment not found');
-    if (!(TRANSITIONS[rows[0].status] ?? []).includes(newStatus)) {
-      throw ApiError.conflict('INVALID_TRANSITION', `Cannot change status from ${rows[0].status} to ${newStatus}`);
-    }
-    await client.query(`UPDATE appointments SET status = $2 WHERE id = $1`, [id, newStatus]);
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
+  const { count } = await prisma.appointment.updateMany({
+    where: { id, status: { in: ALLOWED_FROM[newStatus] } },
+    data: { status: newStatus },
+  });
+  const row = await prisma.appointment.findUnique({ where: { id }, include: withService });
+  if (!row) throw ApiError.notFound('Appointment not found');
+  if (count === 0) {
+    throw ApiError.conflict('INVALID_TRANSITION', `Cannot change status from ${row.status} to ${newStatus}`);
   }
-  const { rows } = await query(`${SELECT} WHERE a.id = $1`, [id]);
-  return toAppointment(rows[0]);
+  return toAppointment(row);
 }
 
 // Confirmed bookings whose time has passed become completed.
 export async function completePastAppointments() {
-  const { rowCount } = await query(
-    `UPDATE appointments SET status = 'completed' WHERE status = 'confirmed' AND end_time < now()`,
-  );
-  return rowCount;
+  const { count } = await prisma.appointment.updateMany({
+    where: { status: STATUS.CONFIRMED, endTime: { lt: new Date() } },
+    data: { status: STATUS.COMPLETED },
+  });
+  return count;
 }
