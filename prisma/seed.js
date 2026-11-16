@@ -2,8 +2,24 @@ import bcrypt from 'bcryptjs';
 import { prisma } from '../src/db/prisma.js';
 import { BCRYPT_COST } from '../src/config/constants.js';
 
-// Placeholder photos (seeded, stable per service). Replace imageUrl values with real photos any time.
-const img = (slug) => `https://picsum.photos/seed/${slug}/800/600`;
+// Photos from Unsplash (free to use), one that matches each service.
+const PHOTOS = {
+  'Swedish Massage': '1544161515-4ab6ce6db874',
+  'Deep Tissue Massage': '1519823551278-64ac92734fb1',
+  'Aromatherapy Session': '1600334129128-685c5582fd35',
+  'Classic Facial': '1570172619644-dfd03ed5d881',
+  'Haircut & Styling': '1560066984-138dadb4c035',
+  'Manicure & Pedicure': '1604654894610-df63bc536371',
+  'Bridal Makeup': '1487412947147-5cebf100ffc2',
+  'Home Deep Cleaning': '1581578731548-c64695cc6952',
+  'AC Maintenance': '1558618666-fcd25c85cd64',
+  'Plumbing Repair Visit': '1585704032915-c3400ca199e7',
+  'Personal Training Session': '1534438327276-14e5300c3a48',
+  'Private Yoga Class': '1544367567-0f2fcb009e0b',
+  'Career Coaching': '1573496359142-b8d87734a5a2',
+  'Nutrition Consultation': '1490645935967-10de6ba17061',
+};
+const img = (name) => `https://images.unsplash.com/photo-${PHOTOS[name]}?w=800&q=70&auto=format&fit=crop`;
 
 // [name, category, price, durationMinutes, isFeatured, description]
 const SERVICES = [
@@ -23,11 +39,9 @@ const SERVICES = [
   ['Nutrition Consultation', 'Consulting', 30, 30, false, 'Personalised eating plan and habit advice from a qualified nutritionist.'],
 ];
 
-const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-
 async function main() {
   for (const [name, category, price, durationMinutes, isFeatured, description] of SERVICES) {
-    const data = { description, price, durationMinutes, imageUrl: img(slug(name)), category, isFeatured };
+    const data = { description, price, durationMinutes, imageUrl: img(name), category, isFeatured };
     await prisma.service.upsert({ where: { name }, update: data, create: { name, ...data } });
   }
 
