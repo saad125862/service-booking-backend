@@ -21,28 +21,33 @@ const PHOTOS = {
 };
 const img = (name) => `https://images.unsplash.com/photo-${PHOTOS[name]}?w=800&q=70&auto=format&fit=crop`;
 
-// [name, category, price, durationMinutes, isFeatured, description]
+// [name, category, price in BDT (Bangladeshi taka), durationMinutes, isFeatured, description]
 const SERVICES = [
-  ['Swedish Massage', 'Wellness', 60, 60, true, 'A relaxing full-body massage using long, flowing strokes to ease tension and improve circulation.'],
-  ['Deep Tissue Massage', 'Wellness', 85, 90, false, 'Firm-pressure massage targeting chronic muscle tightness, ideal for athletes and desk workers.'],
-  ['Aromatherapy Session', 'Wellness', 55, 45, false, 'Calming essential-oil treatment designed to reduce stress and improve sleep quality.'],
-  ['Classic Facial', 'Beauty', 45, 45, true, 'Deep cleansing, exfoliation and hydration facial for fresh, glowing skin.'],
-  ['Haircut & Styling', 'Beauty', 35, 45, false, 'Consultation, precision cut, wash and blow-dry with a stylist of your choice.'],
-  ['Manicure & Pedicure', 'Beauty', 50, 60, false, 'Complete nail care: shaping, cuticle care, massage and polish for hands and feet.'],
-  ['Bridal Makeup', 'Beauty', 120, 90, true, 'Long-lasting, photo-ready bridal makeup including a short trial consultation.'],
-  ['Home Deep Cleaning', 'Home Services', 90, 120, false, 'Top-to-bottom cleaning of your home with eco-friendly products and professional equipment.'],
-  ['AC Maintenance', 'Home Services', 55, 60, false, 'Filter cleaning, gas-level check and performance inspection for split and window units.'],
-  ['Plumbing Repair Visit', 'Home Services', 40, 60, false, 'On-site diagnosis and repair of leaks, blockages and fixture problems (parts extra).'],
-  ['Personal Training Session', 'Fitness', 45, 60, true, 'One-on-one workout tailored to your goals with a certified personal trainer.'],
-  ['Private Yoga Class', 'Fitness', 40, 60, false, 'A private yoga session adapted to your level, focusing on flexibility and mindfulness.'],
-  ['Career Coaching', 'Consulting', 70, 45, false, 'Structured coaching on CV, interviews and career direction with an experienced mentor.'],
-  ['Nutrition Consultation', 'Consulting', 30, 30, false, 'Personalised eating plan and habit advice from a qualified nutritionist.'],
+  ['Swedish Massage', 'Wellness', 2500, 60, true, 'A relaxing full-body massage using long, flowing strokes to ease tension and improve circulation.'],
+  ['Deep Tissue Massage', 'Wellness', 3500, 90, false, 'Firm-pressure massage targeting chronic muscle tightness, ideal for athletes and desk workers.'],
+  ['Aromatherapy Session', 'Wellness', 2200, 45, false, 'Calming essential-oil treatment designed to reduce stress and improve sleep quality.'],
+  ['Classic Facial', 'Beauty', 1800, 45, true, 'Deep cleansing, exfoliation and hydration facial for fresh, glowing skin.'],
+  ['Haircut & Styling', 'Beauty', 600, 45, false, 'Consultation, precision cut, wash and blow-dry with a stylist of your choice.'],
+  ['Manicure & Pedicure', 'Beauty', 1200, 60, false, 'Complete nail care: shaping, cuticle care, massage and polish for hands and feet.'],
+  ['Bridal Makeup', 'Beauty', 15000, 90, true, 'Long-lasting, photo-ready bridal makeup including a short trial consultation.'],
+  ['Home Deep Cleaning', 'Home Services', 4500, 120, false, 'Top-to-bottom cleaning of your home with eco-friendly products and professional equipment.'],
+  ['AC Maintenance', 'Home Services', 1500, 60, false, 'Filter cleaning, gas-level check and performance inspection for split and window units.'],
+  ['Plumbing Repair Visit', 'Home Services', 800, 60, false, 'On-site diagnosis and repair of leaks, blockages and fixture problems (parts extra).'],
+  ['Personal Training Session', 'Fitness', 1500, 60, true, 'One-on-one workout tailored to your goals with a certified personal trainer.'],
+  ['Private Yoga Class', 'Fitness', 1200, 60, false, 'A private yoga session adapted to your level, focusing on flexibility and mindfulness.'],
+  ['Career Coaching', 'Consulting', 2000, 45, false, 'Structured coaching on CV, interviews and career direction with an experienced mentor.'],
+  ['Nutrition Consultation', 'Consulting', 1000, 30, false, 'Personalised eating plan and habit advice from a qualified nutritionist.'],
 ];
+
+// By default the seed only creates what is missing, so edits made through the admin screens
+// survive container restarts. Run with SEED_FORCE=true to overwrite the demo services
+// (prices, photos, descriptions) with the values below.
+const FORCE = process.env.SEED_FORCE === 'true';
 
 async function main() {
   for (const [name, category, price, durationMinutes, isFeatured, description] of SERVICES) {
     const data = { description, price, durationMinutes, imageUrl: img(name), category, isFeatured };
-    await prisma.service.upsert({ where: { name }, update: data, create: { name, ...data } });
+    await prisma.service.upsert({ where: { name }, update: FORCE ? data : {}, create: { name, ...data } });
   }
 
   // Demo account for reviewers (documented in the README).
@@ -68,7 +73,9 @@ async function main() {
     },
   });
 
-  console.log(`Seeded ${SERVICES.length} services, the demo customer and the demo admin.`);
+  console.log(
+    `Seeded ${SERVICES.length} services${FORCE ? ' (overwritten)' : ''}, the demo customer and the demo admin.`,
+  );
 }
 
 main()

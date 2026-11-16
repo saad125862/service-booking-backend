@@ -16,9 +16,9 @@ describe('services catalog', () => {
     const search = await api().get('/api/v1/services').query({ search: 'massage' });
     expect(search.body.data.length).toBeGreaterThan(0);
 
-    const beauty = await api().get('/api/v1/services').query({ category: 'beauty', maxPrice: 45, sort: 'price_asc' });
+    const beauty = await api().get('/api/v1/services').query({ category: 'beauty', maxPrice: 2000, sort: 'price_asc' });
     const prices = beauty.body.data.map((s) => s.price);
-    expect(beauty.body.data.every((s) => s.category === 'Beauty' && s.price <= 45)).toBe(true);
+    expect(beauty.body.data.every((s) => s.category === 'Beauty' && s.price <= 2000)).toBe(true);
     expect(prices).toEqual([...prices].sort((a, b) => a - b));
 
     const featured = await api().get('/api/v1/services').query({ featured: 'true' });

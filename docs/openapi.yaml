@@ -5,6 +5,8 @@ info:
   description: |
     REST API for **Seba (সেবা)**, a service booking and management app.
 
+    **Currency:** all prices are in **BDT** (Bangladeshi taka, ৳).
+
     **Conventions**
     - Base path: `/api/v1`. All bodies are JSON.
     - Success: `{ "success": true, "data": ..., "meta": { ... } }` (`meta` only on paginated lists).
@@ -367,9 +369,9 @@ paths:
 
         | `language` | Example message |
         |---|---|
-        | `en` | I need a relaxing massage under $70 |
-        | `bn` | আমার একটা রিলাক্সিং ম্যাসাজ দরকার, বাজেট ৭০ ডলার |
-        | `banglish` | amar jonno ekta relaxing massage lagbe, 70 dollar er moddhe |
+        | `en` | I need a relaxing massage under ৳3000 |
+        | `bn` | আমার একটা রিলাক্সিং ম্যাসাজ দরকার, বাজেট ৩০০০ টাকা |
+        | `banglish` | amar jonno ekta relaxing massage lagbe, 3000 taka er moddhe |
 
         Limits: message up to 500 characters, up to 10 history messages, 10 requests per minute per user.
         The Gemini API key lives only on the server.
@@ -381,11 +383,11 @@ paths:
             schema: { $ref: '#/components/schemas/ChatRequest' }
             examples:
               english:
-                value: { message: 'I need a relaxing massage under $70' }
+                value: { message: 'I need a relaxing massage under ৳3000' }
               bangla:
-                value: { message: 'আমার একটা রিলাক্সিং ম্যাসাজ দরকার, বাজেট ৭০ ডলার' }
+                value: { message: 'আমার একটা রিলাক্সিং ম্যাসাজ দরকার, বাজেট ৩০০০ টাকা' }
               banglish:
-                value: { message: 'amar jonno ekta relaxing massage lagbe, 70 dollar er moddhe' }
+                value: { message: 'amar jonno ekta relaxing massage lagbe, 3000 taka er moddhe' }
               followUp:
                 value:
                   message: how long does it take?
@@ -540,7 +542,7 @@ components:
         id: { type: string, format: uuid }
         name: { type: string, example: Swedish Massage }
         description: { type: string }
-        price: { type: number, example: 60 }
+        price: { type: number, description: Price in BDT (Bangladeshi taka), example: 2500 }
         durationMinutes: { type: integer, example: 60 }
         imageUrl: { type: string, nullable: true }
         category: { type: string, example: Wellness }
