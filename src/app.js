@@ -12,6 +12,8 @@ import userRoutes from './modules/users/user.routes.js';
 import serviceRoutes from './modules/services/service.routes.js';
 import { appointmentRoutes, availabilityRoutes } from './modules/appointments/appointment.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
+import aiRoutes from './modules/ai/ai.routes.js';
+import { docsRouter } from './docs/swagger.js';
 
 export function createApp() {
   const app = express();
@@ -19,6 +21,8 @@ export function createApp() {
   // Render (and most hosts) sit behind a proxy; needed for correct client IPs in rate limiting.
   app.set('trust proxy', 1);
 
+  // Docs first: they carry their own, relaxed helmet config (Swagger UI needs inline scripts).
+  app.use(docsRouter());
   app.use(helmet());
   app.use(
     cors({
@@ -52,6 +56,7 @@ export function createApp() {
   api.use('/services', availabilityRoutes);
   api.use('/appointments', appointmentRoutes);
   api.use('/admin', adminRoutes);
+  api.use('/ai', aiRoutes);
 
   app.use('/api/v1', api);
 

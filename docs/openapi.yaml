@@ -1,5 +1,630 @@
 openapi: 3.0.3
 info:
-  title: placeholder
-  version: 0.0.0
-paths: {}
+  title: Seba API
+  version: 1.0.0
+  description: |
+    REST API for **Seba (সেবা)**, a service booking and management app.
+
+    **Conventions**
+    - Base path: `/api/v1`. All bodies are JSON.
+    - Success: `{ "success": true, "data": ..., "meta": { ... } }` (`meta` only on paginated lists).
+    - Error: `{ "success": false, "error": { "code": "...", "message": "...", "details": [...] } }`.
+    - Protected routes need `Authorization: Bearer <jwt>` (get one from `/auth/login`; use the **Authorize** button).
+    - Booking conflicts are enforced by the database, so the API answers `409 SLOT_UNAVAILABLE` even under concurrent requests.
+    - Times are ISO 8601 (UTC). Slot labels and `startLabel` are rendered in the business time zone (`timeZone` field).
+
+    **Demo account:** `demo@example.com` / `Demo@1234`
+servers:
+  - url: /api/v1
+    description: This server (works locally and on Render)
+tags:
+  - name: Health
+  - name: Auth
+  - name: Users
+  - name: Services
+  - name: Appointments
+  - name: AI assistant
+  - name: Admin
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness and database check
+      responses:
+        '200':
+          description: API and database are reachable
+          content:
+            application/json:
+              example: { success: true, data: { status: ok, uptime: 124 } }
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Create an account
+      description: Password must be 8-72 characters with at least one letter and one number. Email is case-insensitive.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+            example: { name: Rahim Uddin, email: rahim@example.com, password: Passw0rd1 }
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              example: { success: false, error: { code: EMAIL_TAKEN, message: An account with this email already exists } }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Sign in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+            example: { email: demo@example.com, password: Demo@1234 }
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401':
+          description: Wrong email or password (same message for both, on purpose)
+          content:
+            application/json:
+              example: { success: false, error: { code: INVALID_CREDENTIALS, message: Incorrect email or password } }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Current user
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The authenticated user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [Users]
+      summary: Update profile
+      description: Send `name` and/or `phone`. An empty string or `null` clears the phone number.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProfileRequest' }
+            example: { name: Rahim U., phone: '+880 1700 000000' }
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /users/me/password:
+    patch:
+      tags: [Users]
+      summary: Change password
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 8, maxLength: 72 }
+            example: { currentPassword: Demo@1234, newPassword: NewPass123 }
+      responses:
+        '200':
+          description: Password updated
+          content:
+            application/json:
+              example: { success: true, data: { message: Password updated } }
+        '400':
+          description: Validation error or wrong current password (`INVALID_CURRENT_PASSWORD`)
+          content:
+            application/json:
+              example: { success: false, error: { code: INVALID_CURRENT_PASSWORD, message: Current password is incorrect } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /services:
+    get:
+      tags: [Services]
+      summary: List services (search, filter, sort, paginate)
+      parameters:
+        - { name: search, in: query, description: Matches name, description or category (case-insensitive), schema: { type: string, maxLength: 100 } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: featured, in: query, description: Only featured (`true`) or only non-featured (`false`), schema: { type: string, enum: ['true', 'false'] } }
+        - { name: minPrice, in: query, schema: { type: number, minimum: 0 } }
+        - { name: maxPrice, in: query, schema: { type: number, minimum: 0 } }
+        - name: sort
+          in: query
+          description: '`featured` (default) shows featured then most-booked; `popular` shows most-booked first.'
+          schema: { type: string, enum: [featured, popular, price_asc, price_desc, name, newest], default: featured }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: A page of services
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Service' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /services/categories:
+    get:
+      tags: [Services]
+      summary: Categories with service counts (for filter chips)
+      responses:
+        '200':
+          description: Categories
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                  - { name: Beauty, count: 4 }
+                  - { name: Wellness, count: 3 }
+
+  /services/{id}:
+    get:
+      tags: [Services]
+      summary: Service details
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      responses:
+        '200':
+          description: The service
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/Service' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /services/{id}/availability:
+    get:
+      tags: [Services]
+      summary: Time slots for a service on a date
+      description: |
+        Returns the slot grid for the date. `available: false` means the slot is taken, in the past,
+        or inside the minimum lead time. Advisory only: the database decides at booking time.
+        Allowed dates: today up to 60 days ahead.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+        - { name: date, in: query, required: true, description: Local date (YYYY-MM-DD), schema: { type: string, format: date, example: '2026-11-20' } }
+      responses:
+        '200':
+          description: Slots for the day
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/Availability' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /appointments:
+    post:
+      tags: [Appointments]
+      summary: Book an appointment
+      description: |
+        `startTime` must be one of the available slots from the availability endpoint.
+        New appointments start as `pending`.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppointmentRequest' }
+            example: { serviceId: 5d85757b-32b8-4270-8c16-4221f140fa06, startTime: '2026-11-20T10:00:00.000Z', notes: First visit }
+      responses:
+        '201':
+          description: Booked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/Appointment' }
+        '400':
+          description: Validation error, or `INVALID_SLOT` (off the slot grid, outside working hours, or in the past)
+          content:
+            application/json:
+              example: { success: false, error: { code: INVALID_SLOT, message: That time is not a valid bookable slot for this service } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`SLOT_UNAVAILABLE` (taken, or taken a moment ago by someone else) or `USER_OVERLAP` (you already have an overlapping booking)'
+          content:
+            application/json:
+              example: { success: false, error: { code: SLOT_UNAVAILABLE, message: That time slot was just taken, please pick another } }
+    get:
+      tags: [Appointments]
+      summary: My appointments
+      description: '`upcoming` = still ahead and pending/confirmed. `past` = everything else (ended, cancelled, completed).'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: scope, in: query, schema: { type: string, enum: [upcoming, past] } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/AppointmentStatus' } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: A page of the user's appointments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Appointment' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /appointments/{id}:
+    get:
+      tags: [Appointments]
+      summary: Appointment details
+      description: Only the owner can read it; anyone else gets `404`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      responses:
+        '200':
+          description: The appointment
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/Appointment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /appointments/{id}/cancel:
+    patch:
+      tags: [Appointments]
+      summary: Cancel a pending appointment
+      description: Only the owner can cancel, and only while the status is `pending`. The slot becomes bookable again.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      responses:
+        '200':
+          description: Cancelled appointment
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/Appointment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Not pending
+          content:
+            application/json:
+              example: { success: false, error: { code: NOT_CANCELLABLE, message: 'Only pending appointments can be cancelled (this one is confirmed)' } }
+
+  /ai/chat:
+    post:
+      tags: [AI assistant]
+      summary: Ask the Seba assistant (English, Bangla or Banglish)
+      description: |
+        The assistant answers questions about the available services and recommends up to 3 of them.
+        It detects the language of the latest message and replies in the same one:
+
+        | `language` | Example message |
+        |---|---|
+        | `en` | I need a relaxing massage under $70 |
+        | `bn` | আমার একটা রিলাক্সিং ম্যাসাজ দরকার, বাজেট ৭০ ডলার |
+        | `banglish` | amar jonno ekta relaxing massage lagbe, 70 dollar er moddhe |
+
+        Limits: message up to 500 characters, up to 10 history messages, 10 requests per minute per user.
+        The Gemini API key lives only on the server.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChatRequest' }
+            examples:
+              english:
+                value: { message: 'I need a relaxing massage under $70' }
+              bangla:
+                value: { message: 'আমার একটা রিলাক্সিং ম্যাসাজ দরকার, বাজেট ৭০ ডলার' }
+              banglish:
+                value: { message: 'amar jonno ekta relaxing massage lagbe, 70 dollar er moddhe' }
+              followUp:
+                value:
+                  message: how long does it take?
+                  history:
+                    - { role: user, content: I want a classic facial }
+                    - { role: assistant, content: The Classic Facial is great for glowing skin. }
+      responses:
+        '200':
+          description: Assistant reply
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/ChatResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503':
+          description: '`AI_UNAVAILABLE` (model busy or timed out) or `AI_NOT_CONFIGURED` (no API key on the server)'
+          content:
+            application/json:
+              example: { success: false, error: { code: AI_UNAVAILABLE, message: The assistant is busy right now. Please try again in a moment. } }
+
+  /admin/appointments/{id}/status:
+    patch:
+      tags: [Admin]
+      summary: Move an appointment through its lifecycle (operations/demo)
+      description: |
+        Allowed transitions: `pending → confirmed | cancelled`, `confirmed → completed | cancelled`.
+        Confirmed appointments whose end time has passed are also completed automatically every minute.
+      security: [{ adminKey: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [confirmed, completed, cancelled] }
+            example: { status: confirmed }
+      responses:
+        '200':
+          description: Updated appointment
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/Appointment' }
+        '403':
+          description: Missing or wrong `X-Admin-Key`
+          content:
+            application/json:
+              example: { success: false, error: { code: FORBIDDEN, message: Invalid admin key } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Transition not allowed
+          content:
+            application/json:
+              example: { success: false, error: { code: INVALID_TRANSITION, message: Cannot change status from pending to completed } }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token from `/auth/login` or `/auth/register` (valid 7 days).
+    adminKey:
+      type: apiKey
+      in: header
+      name: X-Admin-Key
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    ValidationError:
+      description: Request failed validation
+      content:
+        application/json:
+          example:
+            success: false
+            error:
+              code: VALIDATION_ERROR
+              message: Validation failed
+              details:
+                - { field: email, message: Enter a valid email address }
+    Unauthorized:
+      description: Missing, invalid or expired token
+      content:
+        application/json:
+          example: { success: false, error: { code: UNAUTHORIZED, message: Authentication required } }
+    NotFound:
+      description: Resource not found (or not owned by the caller)
+      content:
+        application/json:
+          example: { success: false, error: { code: NOT_FOUND, message: Appointment not found } }
+    RateLimited:
+      description: Too many requests
+      content:
+        application/json:
+          example: { success: false, error: { code: RATE_LIMITED, message: Too many attempts, please try again later } }
+  schemas:
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: Demo User }
+        email: { type: string, format: email, example: demo@example.com }
+        phone: { type: string, nullable: true, example: null }
+        createdAt: { type: string, format: date-time }
+    RegisterRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 100 }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8, maxLength: 72 }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    UpdateProfileRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 2, maxLength: 100 }
+        phone: { type: string, nullable: true, description: 'Digits, spaces, +, (), -; empty string or null clears it' }
+    AuthResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: object
+          properties:
+            user: { $ref: '#/components/schemas/User' }
+            token: { type: string, description: JWT }
+    Service:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: Swedish Massage }
+        description: { type: string }
+        price: { type: number, example: 60 }
+        durationMinutes: { type: integer, example: 60 }
+        imageUrl: { type: string, nullable: true }
+        category: { type: string, example: Wellness }
+        isFeatured: { type: boolean }
+        bookingsCount: { type: integer, description: Times this service has been booked }
+    PageMeta:
+      type: object
+      properties:
+        page: { type: integer, example: 1 }
+        limit: { type: integer, example: 20 }
+        total: { type: integer, example: 14 }
+        totalPages: { type: integer, example: 1 }
+    Slot:
+      type: object
+      properties:
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        label: { type: string, example: 10:00 AM }
+        available: { type: boolean }
+    Availability:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        timeZone: { type: string, example: UTC }
+        serviceId: { type: string, format: uuid }
+        durationMinutes: { type: integer }
+        slots:
+          type: array
+          items: { $ref: '#/components/schemas/Slot' }
+    AppointmentStatus:
+      type: string
+      enum: [pending, confirmed, cancelled, completed]
+    CreateAppointmentRequest:
+      type: object
+      required: [serviceId, startTime]
+      properties:
+        serviceId: { type: string, format: uuid }
+        startTime: { type: string, format: date-time }
+        notes: { type: string, maxLength: 500 }
+    Appointment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/AppointmentStatus' }
+        startTime: { type: string, format: date-time }
+        endTime: { type: string, format: date-time }
+        startLabel: { type: string, example: 'Fri, Nov 20, 2026, 10:00 AM' }
+        timeZone: { type: string, example: UTC }
+        notes: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        service:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            price: { type: number }
+            durationMinutes: { type: integer }
+            imageUrl: { type: string, nullable: true }
+            category: { type: string }
+    ChatRequest:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string, minLength: 1, maxLength: 500 }
+        history:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role: { type: string, enum: [user, assistant] }
+              content: { type: string, maxLength: 1000 }
+    ChatResponse:
+      type: object
+      properties:
+        reply: { type: string }
+        language: { type: string, enum: [en, bn, banglish] }
+        recommendedServices:
+          type: array
+          maxItems: 3
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              category: { type: string }
+              price: { type: number }
+              durationMinutes: { type: integer }
+              imageUrl: { type: string, nullable: true }

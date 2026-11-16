@@ -13,7 +13,9 @@ const schema = z.object({
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
   JWT_EXPIRES_IN: z.string().default('7d'),
   GEMINI_API_KEY: z.string().default(''),
-  GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
+  // Primary model, plus a fallback tried once on overload/rate-limit/timeout.
+  GEMINI_MODEL: z.string().default('gemini-3.5-flash-lite'),
+  GEMINI_FALLBACK_MODEL: z.string().default('gemini-3.1-flash-lite'),
   ADMIN_API_KEY: z.string().min(16, 'ADMIN_API_KEY must be at least 16 characters'),
   BUSINESS_TZ: z
     .string()
