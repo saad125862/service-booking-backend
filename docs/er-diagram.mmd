@@ -1,0 +1,117 @@
+erDiagram
+    USERS ||--o{ APPOINTMENTS : books
+    USERS ||--o{ NOTIFICATIONS : receives
+    USERS ||--o{ DISCOUNT_REQUESTS : asks
+    SERVICES ||--o{ APPOINTMENTS : "is booked as"
+    SERVICES ||--o{ DISCOUNT_REQUESTS : "is for"
+    PAYMENT_METHODS ||--o{ APPOINTMENTS : "paid with"
+    APPOINTMENTS ||--o{ PAYMENT_SESSIONS : "online attempts"
+    SERVICE_FIELDS }o..o{ SERVICES : "defines extra values in attributes"
+
+    USERS {
+        uuid id PK
+        enum role "user, admin"
+        varchar name
+        text email UK "lower-case"
+        text password_hash "bcrypt"
+        varchar phone
+        varchar address "default service address"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    SERVICES {
+        uuid id PK
+        varchar name UK
+        text description
+        numeric price "CHECK >= 0, BDT"
+        int duration_minutes "CHECK 1..480"
+        text image_url
+        varchar category
+        bool is_featured
+        bool is_active "hide, never delete"
+        jsonb attributes "values of the custom fields"
+        timestamptz created_at
+    }
+    APPOINTMENTS {
+        uuid id PK
+        uuid user_id FK
+        uuid service_id FK
+        timestamptz start_time
+        timestamptz end_time "CHECK > start_time"
+        enum status "pending to completed"
+        varchar address
+        numeric price "snapshot: amount to pay"
+        numeric original_price "snapshot: list price"
+        numeric discount_amount "snapshot"
+        uuid payment_method_id FK
+        enum payment_status "unpaid, submitted, paid"
+        varchar payment_reference "TrxID or gateway reference"
+        timestamptz paid_at
+        varchar notes
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    PAYMENT_METHODS {
+        uuid id PK
+        varchar code UK
+        varchar name
+        enum type "cash, card, wallet, bank"
+        varchar instructions
+        varchar account_number
+        bool requires_reference
+        varchar gateway_provider "sslcommerz, aamarpay, mock"
+        bool is_active
+        int sort_order
+    }
+    PAYMENT_SESSIONS {
+        uuid id PK
+        uuid appointment_id FK
+        varchar provider
+        varchar tran_id UK "unguessable"
+        numeric amount "booking price at link time"
+        varchar status "initiated, paid, failed"
+        varchar gateway_ref
+        timestamptz created_at
+        timestamptz completed_at
+    }
+    DISCOUNT_REQUESTS {
+        uuid id PK
+        uuid user_id FK
+        uuid service_id FK
+        varchar message
+        varchar language "en, bn, banglish"
+        enum status "pending, approved, used"
+        varchar discount_type "percent, fixed"
+        numeric discount_value
+        varchar reply "written by the assistant"
+        uuid used_appointment_id
+        timestamptz expires_at
+    }
+    NOTIFICATIONS {
+        uuid id PK
+        uuid user_id FK
+        varchar type
+        varchar title
+        varchar body
+        jsonb data
+        timestamptz read_at
+        timestamptz created_at
+    }
+    SERVICE_FIELDS {
+        uuid id PK
+        varchar key UK
+        varchar label
+        enum type "5 field types"
+        jsonb options
+        bool required
+        int sort_order
+        bool is_active
+    }
+    MEDIA {
+        uuid id PK
+        varchar mime_type "jpeg, png, webp"
+        int size_bytes
+        bytea data "uploaded service photos"
+        uuid uploaded_by
+        timestamptz created_at
+    }
