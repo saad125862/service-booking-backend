@@ -9,6 +9,20 @@ REST API for **Seba**, a service booking and management app: customers browse se
 - **Live API (Render + Neon):** https://seba-api-0062.onrender.com (Swagger: https://seba-api-0062.onrender.com/api/docs). Free tier: the first request after idle can take 30-60 s.
 - **Flutter app:** see the `service-booking-app` repository
 
+## See it in action
+
+The Flutter app uses this API for everything below. More screenshots are in the [app README](https://github.com/saad125862/service-booking-app#screenshots).
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="https://raw.githubusercontent.com/saad125862/service-booking-app/main/docs/screenshots/11-booking-confirmed-pay.jpg" width="170" alt="Online payment"><br><sub>Pay online for the exact amount</sub></td>
+<td align="center" valign="top"><img src="https://raw.githubusercontent.com/saad125862/service-booking-app/main/docs/screenshots/49-assistant-discount-approved.jpg" width="170" alt="Discount approval"><br><sub>AI discount, approved by an admin</sub></td>
+<td align="center" valign="top"><img src="https://raw.githubusercontent.com/saad125862/service-booking-app/main/docs/screenshots/50-assistant-payment-link.jpg" width="170" alt="Payment link"><br><sub>AI sends the payment link</sub></td>
+<td align="center" valign="top"><img src="https://raw.githubusercontent.com/saad125862/service-booking-app/main/docs/screenshots/28-admin-booking-actions.jpg" width="170" alt="Payment verification"><br><sub>Admin verifies manual payments</sub></td>
+<td align="center" valign="top"><img src="https://raw.githubusercontent.com/saad125862/service-booking-app/main/docs/screenshots/40-admin-sales-report.jpg" width="170" alt="Sales report"><br><sub>Sales reports</sub></td>
+</tr>
+</table>
+
 ## Quick start (Docker)
 
 Requires Docker Desktop. Nothing else needs to be installed.
