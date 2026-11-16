@@ -38,7 +38,7 @@ All settings are environment variables, validated at startup (the app refuses to
 | `JWT_SECRET` | Signing secret, at least 32 characters. |
 | `JWT_EXPIRES_IN` | Token lifetime (default `7d`). |
 | `ADMIN_API_KEY` | Key for the admin status endpoint (at least 16 characters). |
-| `BUSINESS_TZ` | IANA time zone for working hours and slot labels (default `UTC`). |
+| `BUSINESS_TZ` | IANA time zone for working hours and slot labels (default `UTC`; this project uses `Asia/Dhaka`, Bangladesh time, UTC+6). |
 | `CORS_ORIGINS` | Comma-separated allowed origins, or `*`. |
 | `GEMINI_API_KEY` | Google AI Studio key. **Stays on the server only.** Empty disables the assistant. |
 | `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` | Primary and fallback model (fallback is tried once on overload, rate limit or timeout). |

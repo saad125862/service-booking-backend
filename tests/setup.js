@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { afterAll } from 'vitest';
 
 process.env.NODE_ENV = 'test';
+process.env.BUSINESS_TZ = 'UTC'; // tests express slot times in UTC regardless of the configured zone
 process.env.GEMINI_API_KEY = ''; // tests never call Gemini
 
 afterAll(async () => {
